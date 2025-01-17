@@ -1,7 +1,11 @@
 #if os(macOS) || os(iOS)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Bionic)
+import Bionic
 #endif
 
 public extension Collection {

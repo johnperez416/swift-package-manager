@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2017-2020 Apple Inc. and the Swift project authors
+// Copyright (c) 2017-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -13,22 +13,15 @@
 import Basics
 import PackageLoading
 import PackageModel
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
-extension AbsolutePath {
-    fileprivate func escapedPathString() -> String {
-        return self.pathString.replacingOccurrences(of: "\\", with: "\\\\")
-    }
-}
-
-class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
+final class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
     override var toolsVersion: ToolsVersion {
         .v4
     }
 
-    func testTrivial() throws {
+    func testTrivial() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -37,7 +30,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -47,7 +40,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(manifest.dependencies, [])
     }
 
-    func testTargetDependencies() throws {
+    func testTargetDependencies() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -67,7 +60,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -91,7 +84,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(bar.dependencies, ["foo"])
     }
 
-    func testCompatibleSwiftVersions() throws {
+    func testCompatibleSwiftVersions() async throws {
         do {
             let content = """
                 import PackageDescription
@@ -101,7 +94,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
                 )
                 """
             let observability = ObservabilitySystem.makeForTesting()
-            let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             XCTAssertNoDiagnostics(validationDiagnostics)
             XCTAssertEqual(manifest.swiftLanguageVersions?.map({$0.rawValue}), ["3", "4"])
@@ -116,7 +109,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
                 )
                 """
             let observability = ObservabilitySystem.makeForTesting()
-            let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             XCTAssertNoDiagnostics(validationDiagnostics)
             XCTAssertEqual(manifest.swiftLanguageVersions, [])
@@ -129,44 +122,44 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
                    name: "Foo")
                 """
             let observability = ObservabilitySystem.makeForTesting()
-            let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             XCTAssertNoDiagnostics(validationDiagnostics)
             XCTAssertEqual(manifest.swiftLanguageVersions, nil)
         }
     }
 
-    func testPackageDependencies() throws {
+    func testPackageDependencies() async throws {
         let content = """
             import PackageDescription
             let package = Package(
                name: "Foo",
                dependencies: [
-                   .package(url: "\(AbsolutePath("/foo1").escapedPathString())", from: "1.0.0"),
-                   .package(url: "\(AbsolutePath("/foo2").escapedPathString())", .upToNextMajor(from: "1.0.0")),
-                   .package(url: "\(AbsolutePath("/foo3").escapedPathString())", .upToNextMinor(from: "1.0.0")),
-                   .package(url: "\(AbsolutePath("/foo4").escapedPathString())", .exact("1.0.0")),
-                   .package(url: "\(AbsolutePath("/foo5").escapedPathString())", .branch("main")),
-                   .package(url: "\(AbsolutePath("/foo6").escapedPathString())", .revision("58e9de4e7b79e67c72a46e164158e3542e570ab6")),
+                   .package(url: "\(AbsolutePath("/foo1").escapedPathString)", from: "1.0.0"),
+                   .package(url: "\(AbsolutePath("/foo2").escapedPathString)", .upToNextMajor(from: "1.0.0")),
+                   .package(url: "\(AbsolutePath("/foo3").escapedPathString)", .upToNextMinor(from: "1.0.0")),
+                   .package(url: "\(AbsolutePath("/foo4").escapedPathString)", .exact("1.0.0")),
+                   .package(url: "\(AbsolutePath("/foo5").escapedPathString)", .branch("main")),
+                   .package(url: "\(AbsolutePath("/foo6").escapedPathString)", .revision("58e9de4e7b79e67c72a46e164158e3542e570ab6")),
                ]
             )
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
         let deps = Dictionary(uniqueKeysWithValues: manifest.dependencies.map{ ($0.identity.description, $0) })
-        XCTAssertEqual(deps["foo1"], .localSourceControl(path: .init("/foo1"), requirement: .upToNextMajor(from: "1.0.0")))
-        XCTAssertEqual(deps["foo2"], .localSourceControl(path: .init("/foo2"), requirement: .upToNextMajor(from: "1.0.0")))
-        XCTAssertEqual(deps["foo3"], .localSourceControl(path: .init("/foo3"), requirement: .upToNextMinor(from: "1.0.0")))
-        XCTAssertEqual(deps["foo4"], .localSourceControl(path: .init("/foo4"), requirement: .exact("1.0.0")))
-        XCTAssertEqual(deps["foo5"], .localSourceControl(path: .init("/foo5"), requirement: .branch("main")))
-        XCTAssertEqual(deps["foo6"], .localSourceControl(path: .init("/foo6"), requirement: .revision("58e9de4e7b79e67c72a46e164158e3542e570ab6")))
+        XCTAssertEqual(deps["foo1"], .localSourceControl(path: "/foo1", requirement: .upToNextMajor(from: "1.0.0")))
+        XCTAssertEqual(deps["foo2"], .localSourceControl(path: "/foo2", requirement: .upToNextMajor(from: "1.0.0")))
+        XCTAssertEqual(deps["foo3"], .localSourceControl(path: "/foo3", requirement: .upToNextMinor(from: "1.0.0")))
+        XCTAssertEqual(deps["foo4"], .localSourceControl(path: "/foo4", requirement: .exact("1.0.0")))
+        XCTAssertEqual(deps["foo5"], .localSourceControl(path: "/foo5", requirement: .branch("main")))
+        XCTAssertEqual(deps["foo6"], .localSourceControl(path: "/foo6", requirement: .revision("58e9de4e7b79e67c72a46e164158e3542e570ab6")))
     }
 
-    func testProducts() throws {
+    func testProducts() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -184,7 +177,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -206,7 +199,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(fooDy.targets, ["Foo"])
     }
 
-    func testSystemPackage() throws {
+    func testSystemPackage() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -220,7 +213,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -232,7 +225,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         ])
     }
 
-    func testCTarget() throws {
+    func testCTarget() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -248,7 +241,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -259,7 +252,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(bar.publicHeadersPath, nil)
     }
 
-    func testTargetProperties() throws {
+    func testTargetProperties() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -278,7 +271,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -295,7 +288,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         XCTAssert(bar.sources == nil)
     }
 
-    func testUnavailableAPIs() throws {
+    func testUnavailableAPIs() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -310,8 +303,8 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        XCTAssertThrowsError(try loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
-            if case ManifestParseError.invalidManifestFormat(let error, _) = error {
+        await XCTAssertAsyncThrowsError(try await loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
+            if case ManifestParseError.invalidManifestFormat(let error, _, _) = error {
                 XCTAssert(error.contains("error: 'package(url:version:)' is unavailable: use package(url:exact:) instead"), "\(error)")
                 XCTAssert(error.contains("error: 'package(url:range:)' is unavailable: use package(url:_:) instead"), "\(error)")
             } else {
@@ -320,7 +313,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         }
     }
 
-    func testLanguageStandards() throws {
+    func testLanguageStandards() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -334,7 +327,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -343,7 +336,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(manifest.cxxLanguageStandard, "gnu++14")
     }
 
-    func testManifestWithWarnings() throws {
+    func testManifestWithWarnings() async throws {
         let fs = InMemoryFileSystem()
         let manifestPath = AbsolutePath.root.appending(component: Manifest.filename)
 
@@ -360,7 +353,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         try fs.writeFileContents(manifestPath, string: content)
 
         let observability = ObservabilitySystem.makeForTesting()
-        let manifest = try manifestLoader.load(
+        let manifest = try await manifestLoader.load(
             manifestPath: manifestPath,
             packageKind: .root(.root),
             toolsVersion: .v4,
@@ -378,7 +371,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         }
     }
 
-    func testDuplicateTargets() throws {
+    func testDuplicateTargets() async throws {
         let content = """
             import PackageDescription
 
@@ -394,7 +387,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         testDiagnostics(validationDiagnostics) { result in
             result.checkUnordered(diagnostic: "duplicate target named 'A'", severity: .error)
@@ -402,7 +395,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
         }
     }
 
-    func testEmptyProductTargets() throws {
+    func testEmptyProductTargets() async throws {
         let content = """
             import PackageDescription
 
@@ -418,14 +411,14 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         testDiagnostics(validationDiagnostics) { result in
             result.check(diagnostic: "product 'Product' doesn't reference any targets", severity: .error)
         }
     }
 
-    func testProductTargetNotFound() throws {
+    func testProductTargetNotFound() async throws {
         let content = """
             import PackageDescription
 
@@ -441,7 +434,7 @@ class PackageDescription4_0LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         testDiagnostics(validationDiagnostics) { result in
             result.check(diagnostic: "target 'B' referenced in product 'Product' could not be found; valid targets are: 'A'", severity: .error)

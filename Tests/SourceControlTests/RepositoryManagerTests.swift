@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2017 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -11,18 +11,18 @@
 //===----------------------------------------------------------------------===//
 
 @testable import Basics
+import _Concurrency
 import PackageModel
-import SPMTestSupport
+import _InternalTestSupport
 @testable import SourceControl
-import TSCBasic
 import XCTest
 
-class RepositoryManagerTests: XCTestCase {
-    func testBasics() throws {
+final class RepositoryManagerTests: XCTestCase {
+    func testBasics() async throws {
         let fs = localFileSystem
         let observability = ObservabilitySystem.makeForTesting()
 
-        try testWithTemporaryDirectory { path in
+        try await testWithTemporaryDirectory { path in
             let provider = DummyRepositoryProvider(fileSystem: fs)
             let delegate = DummyRepositoryManagerDelegate()
 
@@ -33,15 +33,15 @@ class RepositoryManagerTests: XCTestCase {
                 delegate: delegate
             )
 
-            let dummyRepo = RepositorySpecifier(path: .init("/dummy"))
-            let badDummyRepo = RepositorySpecifier(path: .init("/badDummy"))
+            let dummyRepo = RepositorySpecifier(path: "/dummy")
+            let badDummyRepo = RepositorySpecifier(path: "/badDummy")
             var prevHandle: RepositoryManager.RepositoryHandle?
 
             // Check that we can "fetch" a repository.
 
             do {
                 delegate.prepare(fetchExpected: true, updateExpected: false)
-                let handle = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+                let handle = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
                 XCTAssertNoDiagnostics(observability.diagnostics)
 
                 prevHandle = handle
@@ -52,11 +52,11 @@ class RepositoryManagerTests: XCTestCase {
                 XCTAssertEqual(try! repository.getTags(), ["1.0.0"])
 
                 // Create a checkout of the repository.
-                let checkoutPath = path.appending(component: "checkout")
+                let checkoutPath = path.appending("checkout")
                 _ = try! handle.createWorkingCopy(at: checkoutPath, editable: false)
 
                 XCTAssertDirectoryExists(checkoutPath)
-                XCTAssertFileExists(checkoutPath.appending(component: "README.txt"))
+                XCTAssertFileExists(checkoutPath.appending("README.txt"))
 
                 try delegate.wait(timeout: .now() + 2)
                 XCTAssertEqual(delegate.willFetch.map { $0.repository }, [dummyRepo])
@@ -67,7 +67,7 @@ class RepositoryManagerTests: XCTestCase {
 
             do {
                 delegate.prepare(fetchExpected: true, updateExpected: false)
-                XCTAssertThrowsError(try manager.lookup(repository: badDummyRepo, observabilityScope: observability.topScope)) { error in
+                await XCTAssertAsyncThrowsError(try await manager.lookup(repository: badDummyRepo, observabilityScope: observability.topScope)) { error in
                     XCTAssertEqual(error as? DummyError, DummyError.invalidRepository)
                 }
 
@@ -83,7 +83,7 @@ class RepositoryManagerTests: XCTestCase {
 
             do {
                 delegate.prepare(fetchExpected: false, updateExpected: true)
-                let handle = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+                let handle = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
                 XCTAssertNoDiagnostics(observability.diagnostics)
                 XCTAssertEqual(handle.repository, dummyRepo)
                 XCTAssertEqual(handle.repository, prevHandle?.repository)
@@ -102,14 +102,14 @@ class RepositoryManagerTests: XCTestCase {
 
                 // Check removing the repo updates the persistent file.
                 /*do {
-                    let checkoutsStateFile = path.appending(component: "checkouts-state.json")
+                    let checkoutsStateFile = path.appending("checkouts-state.json")
                     let jsonData = try JSON(bytes: localFileSystem.readFileContents(checkoutsStateFile))
                     XCTAssertEqual(jsonData.dictionary?["object"]?.dictionary?["repositories"]?.dictionary?[dummyRepo.location.description], nil)
                 }*/
 
                 // We should get a new handle now because we deleted the existing repository.
                 delegate.prepare(fetchExpected: true, updateExpected: false)
-                let handle = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+                let handle = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
                 XCTAssertNoDiagnostics(observability.diagnostics)
                 XCTAssertEqual(handle.repository, dummyRepo)
 
@@ -123,22 +123,14 @@ class RepositoryManagerTests: XCTestCase {
         }
     }
 
-    func testCache() throws {
-        if #available(macOS 11, *) {
-            // No need to skip the test.
-        }
-        else {
-            // Avoid a crasher that seems to happen only on macOS 10.15, but leave an environment variable for testing.
-            try XCTSkipUnless(ProcessEnv.vars["SWIFTPM_ENABLE_FLAKY_REPOSITORYMANAGERTESTS"] == "1", "skipping test that sometimes crashes in CI (rdar://70540298)")
-        }
-
+    func testCache() async throws {
         let fs = localFileSystem
         let observability = ObservabilitySystem.makeForTesting()
 
-        try fixture(name: "DependencyResolution/External/Simple") { fixturePath in
-            let cachePath = fixturePath.appending(component: "cache")
-            let repositoriesPath = fixturePath.appending(component: "repositories")
-            let repo = RepositorySpecifier(path: fixturePath.appending(component: "Foo"))
+        try await fixture(name: "DependencyResolution/External/Simple") { (fixturePath: AbsolutePath) in
+            let cachePath = fixturePath.appending("cache")
+            let repositoriesPath = fixturePath.appending("repositories")
+            let repo = RepositorySpecifier(path: fixturePath.appending("Foo"))
 
             let provider = GitRepositoryProvider()
             let delegate = DummyRepositoryManagerDelegate()
@@ -154,10 +146,10 @@ class RepositoryManagerTests: XCTestCase {
 
             // fetch packages and populate cache
             delegate.prepare(fetchExpected: true, updateExpected: false)
-            _ = try manager.lookup(repository: repo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: repo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
-            XCTAssertDirectoryExists(cachePath.appending(repo.storagePath()))
-            XCTAssertDirectoryExists(repositoriesPath.appending(repo.storagePath()))
+            try XCTAssertDirectoryExists(cachePath.appending(repo.storagePath()))
+            try XCTAssertDirectoryExists(repositoriesPath.appending(repo.storagePath()))
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch[0].details,
                            RepositoryManager.FetchDetails(fromCache: false, updatedCache: false))
@@ -169,9 +161,9 @@ class RepositoryManagerTests: XCTestCase {
 
             // fetch packages from the cache
             delegate.prepare(fetchExpected: true, updateExpected: false)
-            _ = try manager.lookup(repository: repo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: repo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
-            XCTAssertDirectoryExists(repositoriesPath.appending(repo.storagePath()))
+            try XCTAssertDirectoryExists(repositoriesPath.appending(repo.storagePath()))
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch[1].details,
                            RepositoryManager.FetchDetails(fromCache: true, updatedCache: false))
@@ -184,10 +176,10 @@ class RepositoryManagerTests: XCTestCase {
 
             // fetch packages and populate cache
             delegate.prepare(fetchExpected: true, updateExpected: false)
-            _ = try manager.lookup(repository: repo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: repo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
-            XCTAssertDirectoryExists(cachePath.appending(repo.storagePath()))
-            XCTAssertDirectoryExists(repositoriesPath.appending(repo.storagePath()))
+            try XCTAssertDirectoryExists(cachePath.appending(repo.storagePath()))
+            try XCTAssertDirectoryExists(repositoriesPath.appending(repo.storagePath()))
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch[2].details,
                            RepositoryManager.FetchDetails(fromCache: false, updatedCache: false))
@@ -196,48 +188,51 @@ class RepositoryManagerTests: XCTestCase {
 
             // update packages from the cache
             delegate.prepare(fetchExpected: false, updateExpected: true)
-            _ = try manager.lookup(repository: repo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: repo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             try delegate.wait(timeout: .now() + 2)
-            XCTAssertEqual(delegate.willUpdate[0].storagePath(), repo.storagePath())
-            XCTAssertEqual(delegate.didUpdate[0].storagePath(), repo.storagePath())
+            try XCTAssertEqual(delegate.willUpdate[0].storagePath(), repo.storagePath())
+            try XCTAssertEqual(delegate.didUpdate[0].storagePath(), repo.storagePath())
         }
     }
 
-    func testReset() throws {
+    func testReset() async throws {
         let fs = localFileSystem
         let observability = ObservabilitySystem.makeForTesting()
 
-        try testWithTemporaryDirectory { path in
-            let repos = path.appending(component: "repo")
+        try await testWithTemporaryDirectory { path in
+            let repos = path.appending("repo")
             let provider = DummyRepositoryProvider(fileSystem: fs)
             let delegate = DummyRepositoryManagerDelegate()
 
             try fs.createDirectory(repos, recursive: true)
+
             let manager = RepositoryManager(
                 fileSystem: fs,
                 path: repos,
                 provider: provider,
                 delegate: delegate
             )
-            let dummyRepo = RepositorySpecifier(path: .init("/dummy"))
+            let dummyRepo = RepositorySpecifier(path: "/dummy")
 
             delegate.prepare(fetchExpected: true, updateExpected: false)
-            _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             delegate.prepare(fetchExpected: false, updateExpected: true)
-            _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch.count, 1)
             XCTAssertEqual(delegate.didFetch.count, 1)
 
-            try manager.reset()
+            manager.reset(observabilityScope: observability.topScope)
+            XCTAssertNoDiagnostics(observability.diagnostics)
+            
             XCTAssertTrue(!fs.isDirectory(repos))
             try fs.createDirectory(repos, recursive: true)
 
             delegate.prepare(fetchExpected: true, updateExpected: false)
-            _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch.count, 2)
@@ -246,13 +241,13 @@ class RepositoryManagerTests: XCTestCase {
     }
 
     /// Check that the manager is persistent.
-    func testPersistence() throws {
+    func testPersistence() async throws {
         let fs = localFileSystem
         let observability = ObservabilitySystem.makeForTesting()
 
-        try testWithTemporaryDirectory { path in
+        try await testWithTemporaryDirectory { path in
             let provider = DummyRepositoryProvider(fileSystem: fs)
-            let dummyRepo = RepositorySpecifier(path: .init("/dummy"))
+            let dummyRepo = RepositorySpecifier(path: "/dummy")
 
             // Do the initial fetch.
             do {
@@ -265,7 +260,7 @@ class RepositoryManagerTests: XCTestCase {
                 )
 
                 delegate.prepare(fetchExpected: true, updateExpected: false)
-                _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+                _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
                 XCTAssertNoDiagnostics(observability.diagnostics)
                 try delegate.wait(timeout: .now() + 2)
                 XCTAssertEqual(delegate.willFetch.map { $0.repository }, [dummyRepo])
@@ -286,7 +281,7 @@ class RepositoryManagerTests: XCTestCase {
                 )
 
                 delegate.prepare(fetchExpected: true, updateExpected: false)
-                _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+                _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
                 XCTAssertNoDiagnostics(observability.diagnostics)
                 // This time fetch shouldn't be called.
                 try delegate.wait(timeout: .now() + 2)
@@ -312,10 +307,10 @@ class RepositoryManagerTests: XCTestCase {
                     provider: provider,
                     delegate: delegate
                 )
-                let dummyRepo = RepositorySpecifier(path: .init("/dummy"))
+                let dummyRepo = RepositorySpecifier(path: "/dummy")
 
                 delegate.prepare(fetchExpected: true, updateExpected: false)
-                _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+                _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
                 XCTAssertNoDiagnostics(observability.diagnostics)
                 try delegate.wait(timeout: .now() + 2)
                 XCTAssertEqual(delegate.willFetch.map { $0.repository }, [dummyRepo])
@@ -327,11 +322,22 @@ class RepositoryManagerTests: XCTestCase {
         }
     }
 
-    func testConcurrency() throws {
+    func testCanonicalLocation() throws {
+        let variants: [RepositorySpecifier] = [
+            .init(url: "https://scm.com/org/foo"),
+            .init(url: "https://scm.com/org/foo.git"),
+        ]
+
+        for variant in variants {
+            XCTAssertEqual(try variant.storagePath(), try variants[0].storagePath())
+        }
+    }
+
+    func testConcurrency() async throws {
         let fs = localFileSystem
         let observability = ObservabilitySystem.makeForTesting()
 
-        try testWithTemporaryDirectory { path in
+        try await testWithTemporaryDirectory { path in
             let provider = DummyRepositoryProvider(fileSystem: fs)
             let delegate = DummyRepositoryManagerDelegate()
             let manager = RepositoryManager(
@@ -340,29 +346,26 @@ class RepositoryManagerTests: XCTestCase {
                 provider: provider,
                 delegate: delegate
             )
-            let dummyRepo = RepositorySpecifier(path: .init("/dummy"))
+            let dummyRepoPath = try AbsolutePath(validating: "/dummy")
+            let dummyRepo = RepositorySpecifier(path: dummyRepoPath)
 
-            let group = DispatchGroup()
-            let results = ThreadSafeKeyValueStore<Int, Result<RepositoryManager.RepositoryHandle, Error>>()
+            let results = ThreadSafeKeyValueStore<Int, RepositoryManager.RepositoryHandle>()
             let concurrency = 10000
-            for index in 0 ..< concurrency {
-                group.enter()
-                delegate.prepare(fetchExpected: index == 0, updateExpected: index > 0)
-                manager.lookup(
-                    package: .init(url: dummyRepo.url),
-                    repository: dummyRepo,
-                    skipUpdate: false,
-                    observabilityScope: observability.topScope,
-                    delegateQueue: .sharedConcurrent,
-                    callbackQueue: .sharedConcurrent
-                ) { result in                    
-                    results[index] = result
-                    group.leave()
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for index in 0 ..< concurrency {
+                    group.addTask {
+                        delegate.prepare(fetchExpected: index == 0, updateExpected: index > 0)
+                        results[index] = try await manager.lookup(
+                            package: PackageIdentity(path: dummyRepoPath),
+                            repository: dummyRepo,
+                            updateStrategy: .always,
+                            observabilityScope: observability.topScope,
+                            delegateQueue: .sharedConcurrent,
+                            callbackQueue: .sharedConcurrent
+                        )
+                    }
                 }
-            }
-
-            if case .timedOut = group.wait(timeout: .now() + 60) {
-                return XCTFail("timeout")
+                try await group.waitForAll()
             }
 
             XCTAssertNoDiagnostics(observability.diagnostics)
@@ -375,17 +378,17 @@ class RepositoryManagerTests: XCTestCase {
 
             XCTAssertEqual(results.count, concurrency)
             for index in 0 ..< concurrency {
-                XCTAssertEqual(try results[index]?.get().repository, dummyRepo)
+                XCTAssertEqual(results[index]?.repository, dummyRepo)
             }
         }
     }
 
-    func testSkipUpdate() throws {
+    func testSkipUpdate() async throws {
         let fs = localFileSystem
         let observability = ObservabilitySystem.makeForTesting()
 
-        try testWithTemporaryDirectory { path in
-            let repos = path.appending(component: "repo")
+        try await testWithTemporaryDirectory { path in
+            let repos = path.appending("repo")
             let provider = DummyRepositoryProvider(fileSystem: fs)
             let delegate = DummyRepositoryManagerDelegate()
 
@@ -397,10 +400,10 @@ class RepositoryManagerTests: XCTestCase {
                 provider: provider,
                 delegate: delegate
             )
-            let dummyRepo = RepositorySpecifier(path: .init("/dummy"))
+            let dummyRepo = RepositorySpecifier(path: "/dummy")
 
             delegate.prepare(fetchExpected: true, updateExpected: false)
-            _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch.count, 1)
@@ -409,10 +412,10 @@ class RepositoryManagerTests: XCTestCase {
             XCTAssertEqual(delegate.didUpdate.count, 0)
 
             delegate.prepare(fetchExpected: false, updateExpected: true)
-            _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             delegate.prepare(fetchExpected: false, updateExpected: true)
-            _ = try manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch.count, 1)
@@ -421,7 +424,7 @@ class RepositoryManagerTests: XCTestCase {
             XCTAssertEqual(delegate.didUpdate.count, 2)
 
             delegate.prepare(fetchExpected: false, updateExpected: false)
-            _ = try manager.lookup(repository: dummyRepo, skipUpdate: true, observabilityScope: observability.topScope)
+            _ = try await manager.lookup(repository: dummyRepo, updateStrategy: .never, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             try delegate.wait(timeout: .now() + 2)
             XCTAssertEqual(delegate.willFetch.count, 1)
@@ -450,13 +453,14 @@ class RepositoryManagerTests: XCTestCase {
         let finishGroup = DispatchGroup()
         let results = ThreadSafeKeyValueStore<RepositorySpecifier, Result<RepositoryManager.RepositoryHandle, Error>>()
         for index in 0 ..< total {
-            let repository = RepositorySpecifier(path: .init("/repo/\(index)"))
+            let path = try AbsolutePath(validating: "/repo/\(index)")
+            let repository = RepositorySpecifier(path: path)
             provider.startGroup.enter()
             finishGroup.enter()
             manager.lookup(
-                package: .init(url: repository.url),
+                package: PackageIdentity(path: path),
                 repository: repository,
-                skipUpdate: true,
+                updateStrategy: .never,
                 observabilityScope: observability.topScope,
                 delegateQueue: .sharedConcurrent,
                 callbackQueue: .sharedConcurrent
@@ -525,10 +529,6 @@ class RepositoryManagerTests: XCTestCase {
                 print("\(repository) okay")
             }
 
-            func repositoryExists(at path: AbsolutePath) throws -> Bool {
-                return false
-            }
-
             func open(repository: RepositorySpecifier, at path: AbsolutePath) throws -> Repository {
                 fatalError("should not be called")
             }
@@ -549,16 +549,123 @@ class RepositoryManagerTests: XCTestCase {
                 fatalError("should not be called")
             }
 
-            func isValidDirectory(_ directory: AbsolutePath) -> Bool {
-                fatalError("should not be called")
+            func isValidDirectory(_ directory: AbsolutePath) throws -> Bool {
+                return false
             }
 
-            func isValidRefFormat(_ ref: String) -> Bool {
+            public func isValidDirectory(_ directory: AbsolutePath, for repository: RepositorySpecifier) throws -> Bool {
                 fatalError("should not be called")
             }
 
             func cancel(deadline: DispatchTime) throws {
                 print("cancel")
+            }
+        }
+    }
+
+    func testInvalidRepositoryOnDisk() async throws {
+        let fileSystem = localFileSystem
+        let observability = ObservabilitySystem.makeForTesting()
+
+        try await testWithTemporaryDirectory { path in
+            let repositoriesDirectory = path.appending("repositories")
+            try fileSystem.createDirectory(repositoriesDirectory, recursive: true)
+
+            let testRepository = RepositorySpecifier(url: .init("test-\(UUID().uuidString)"))
+            let provider = MockRepositoryProvider(repository: testRepository)
+
+            let manager = RepositoryManager(
+                fileSystem: fileSystem,
+                path: repositoriesDirectory,
+                provider: provider,
+                delegate: nil
+            )
+
+            _ = try await manager.lookup(repository: testRepository, observabilityScope: observability.topScope)
+            testDiagnostics(observability.diagnostics) { result in
+                result.check(
+                    diagnostic: .contains("is not valid git repository for '\(testRepository)', will fetch again"),
+                    severity: .warning
+                )
+            }
+        }
+
+        class MockRepositoryProvider: RepositoryProvider {
+            let repository: RepositorySpecifier
+            var fetch: Int = 0
+
+            init(repository: RepositorySpecifier) {
+                self.repository = repository
+            }
+
+            func fetch(repository: RepositorySpecifier, to path: AbsolutePath, progressHandler: ((FetchProgress) -> Void)?) throws {
+                assert(repository == self.repository)
+                self.fetch += 1
+            }
+
+            func open(repository: RepositorySpecifier, at path: AbsolutePath) throws -> Repository {
+                return MockRepository()
+            }
+
+            func createWorkingCopy(repository: RepositorySpecifier, sourcePath: AbsolutePath, at destinationPath: AbsolutePath, editable: Bool) throws -> WorkingCheckout {
+                fatalError("should not be called")
+            }
+
+            func workingCopyExists(at path: AbsolutePath) throws -> Bool {
+                fatalError("should not be called")
+            }
+
+            func openWorkingCopy(at path: AbsolutePath) throws -> WorkingCheckout {
+                fatalError("should not be called")
+            }
+
+            func copy(from sourcePath: AbsolutePath, to destinationPath: AbsolutePath) throws {
+                fatalError("should not be called")
+            }
+
+            func isValidDirectory(_ directory: AbsolutePath) throws -> Bool {
+                // the directory exists
+                return true
+            }
+
+            public func isValidDirectory(_ directory: AbsolutePath, for repository: RepositorySpecifier) throws -> Bool {
+                assert(repository == self.repository)
+                // the directory is not valid
+                return false
+            }
+
+            func cancel(deadline: DispatchTime) throws {
+                fatalError("should not be called")
+            }
+        }
+
+        class MockRepository: Repository {
+            func getTags() throws -> [String] {
+                fatalError("unexpected API call")
+            }
+
+            func resolveRevision(tag: String) throws -> Revision {
+                fatalError("unexpected API call")
+            }
+
+            func resolveRevision(identifier: String) throws -> Revision {
+                fatalError("unexpected API call")
+            }
+
+            func exists(revision: Revision) -> Bool {
+                fatalError("unexpected API call")
+            }
+
+            func fetch() throws {
+                // noop
+            }
+
+            func openFileView(revision: Revision) throws -> FileSystem {
+                fatalError("unexpected API call")
+            }
+
+            public func openFileView(tag: String) throws -> FileSystem {
+                fatalError("unexpected API call")
             }
         }
     }
@@ -586,16 +693,22 @@ extension RepositoryManager {
         )
     }
 
-    fileprivate func lookup(repository: RepositorySpecifier, skipUpdate: Bool = false, observabilityScope: ObservabilityScope) throws -> RepositoryHandle {
-        return try tsc_await {
+    fileprivate func lookup(
+        repository: RepositorySpecifier,
+        updateStrategy: RepositoryUpdateStrategy = .always,
+        observabilityScope: ObservabilityScope
+    ) async throws -> RepositoryHandle {
+        return try await withCheckedThrowingContinuation { continuation in
             self.lookup(
-                package: .init(url: repository.url),
+                package: .init(url: SourceControlURL(repository.url)),
                 repository: repository,
-                skipUpdate: skipUpdate,
+                updateStrategy: updateStrategy,
                 observabilityScope: observabilityScope,
                 delegateQueue: .sharedConcurrent,
                 callbackQueue: .sharedConcurrent,
-                completion: $0
+                completion: {
+                  continuation.resume(with: $0)
+                }
             )
         }
     }
@@ -603,50 +716,6 @@ extension RepositoryManager {
 
 private enum DummyError: Swift.Error {
     case invalidRepository
-}
-
-private class DummyRepository: Repository {
-    unowned let provider: DummyRepositoryProvider
-
-    init(provider: DummyRepositoryProvider) {
-        self.provider = provider
-    }
-
-    func getTags() throws -> [String] {
-        ["1.0.0"]
-    }
-
-    func resolveRevision(tag: String) throws -> Revision {
-        fatalError("unexpected API call")
-    }
-
-    func resolveRevision(identifier: String) throws -> Revision {
-        fatalError("unexpected API call")
-    }
-
-    func exists(revision: Revision) -> Bool {
-        fatalError("unexpected API call")
-    }
-
-    func isValidDirectory(_ directory: AbsolutePath) -> Bool {
-        fatalError("unexpected API call")
-    }
-
-    func isValidRefFormat(_ ref: String) -> Bool {
-        fatalError("unexpected API call")
-    }
-
-    func fetch() throws {
-        self.provider.increaseFetchCount()
-    }
-
-    func openFileView(revision: Revision) throws -> FileSystem {
-        fatalError("unexpected API call")
-    }
-
-    public func openFileView(tag: String) throws -> FileSystem {
-        fatalError("unexpected API call")
-    }
 }
 
 private class DummyRepositoryProvider: RepositoryProvider {
@@ -663,21 +732,17 @@ private class DummyRepositoryProvider: RepositoryProvider {
     func fetch(repository: RepositorySpecifier, to path: AbsolutePath, progressHandler: FetchProgress.Handler? = nil) throws {
         assert(!self.fileSystem.exists(path))
         try self.fileSystem.createDirectory(path, recursive: true)
-        try self.fileSystem.writeFileContents(path.appending(component: "readme.md"), bytes: ByteString(encodingAsUTF8: repository.location.description))
+        try self.fileSystem.writeFileContents(path.appending("readme.md"), string: repository.location.description)
 
         self.lock.withLock {
             self._numClones += 1
         }
 
         // We only support one dummy URL.
-        let basename = repository.url.pathComponents.last!
+        let basename = repository.basename
         if basename != "dummy" {
             throw DummyError.invalidRepository
         }
-    }
-
-    public func repositoryExists(at path: AbsolutePath) throws -> Bool {
-        return self.fileSystem.isDirectory(path)
     }
 
     func copy(from sourcePath: AbsolutePath, to destinationPath: AbsolutePath) throws {
@@ -700,7 +765,7 @@ private class DummyRepositoryProvider: RepositoryProvider {
 
     func createWorkingCopy(repository: RepositorySpecifier, sourcePath: AbsolutePath, at destinationPath: AbsolutePath, editable: Bool) throws -> WorkingCheckout  {
         try self.fileSystem.createDirectory(destinationPath)
-        try self.fileSystem.writeFileContents(destinationPath.appending(component: "README.txt"), bytes: "Hi")
+        try self.fileSystem.writeFileContents(destinationPath.appending("README.txt"), bytes: "Hi")
         return try self.openWorkingCopy(at: destinationPath)
     }
 
@@ -712,11 +777,11 @@ private class DummyRepositoryProvider: RepositoryProvider {
         return DummyWorkingCheckout(at: path)
     }
 
-    func isValidDirectory(_ directory: AbsolutePath) -> Bool {
-        return true
+    func isValidDirectory(_ directory: AbsolutePath) throws -> Bool {
+        return self.fileSystem.isDirectory(directory)
     }
 
-    func isValidRefFormat(_ ref: String) -> Bool {
+    func isValidDirectory(_ directory: AbsolutePath, for repository: RepositorySpecifier) throws -> Bool {
         return true
     }
 
@@ -785,7 +850,7 @@ private class DummyRepositoryProvider: RepositoryProvider {
             fatalError("not implemented")
         }
 
-        func isAlternateObjectStoreValid() -> Bool {
+        func isAlternateObjectStoreValid(expected: AbsolutePath) -> Bool {
             fatalError("not implemented")
         }
 
@@ -795,7 +860,7 @@ private class DummyRepositoryProvider: RepositoryProvider {
     }
 }
 
-private class DummyRepositoryManagerDelegate: RepositoryManager.Delegate {
+fileprivate class DummyRepositoryManagerDelegate: RepositoryManager.Delegate {
     private var _willFetch = ThreadSafeArrayStore<(repository: RepositorySpecifier, details: RepositoryManager.FetchDetails)>()
     private var _didFetch = ThreadSafeArrayStore<(repository: RepositorySpecifier, result: Result<RepositoryManager.FetchDetails, Error>)>()
     private var _willUpdate = ThreadSafeArrayStore<RepositorySpecifier>()
@@ -868,5 +933,41 @@ private class DummyRepositoryManagerDelegate: RepositoryManager.Delegate {
     func didUpdate(package: PackageIdentity, repository: RepositorySpecifier, duration: DispatchTimeInterval) {
         self._didUpdate.append(repository)
         self.group.leave()
+    }
+}
+
+fileprivate class DummyRepository: Repository {
+    unowned let provider: DummyRepositoryProvider
+
+    init(provider: DummyRepositoryProvider) {
+        self.provider = provider
+    }
+
+    func getTags() throws -> [String] {
+        ["1.0.0"]
+    }
+
+    func resolveRevision(tag: String) throws -> Revision {
+        fatalError("unexpected API call")
+    }
+
+    func resolveRevision(identifier: String) throws -> Revision {
+        fatalError("unexpected API call")
+    }
+
+    func exists(revision: Revision) -> Bool {
+        fatalError("unexpected API call")
+    }
+
+    func fetch() throws {
+        self.provider.increaseFetchCount()
+    }
+
+    func openFileView(revision: Revision) throws -> FileSystem {
+        fatalError("unexpected API call")
+    }
+
+    public func openFileView(tag: String) throws -> FileSystem {
+        fatalError("unexpected API call")
     }
 }

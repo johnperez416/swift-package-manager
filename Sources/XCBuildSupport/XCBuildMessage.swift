@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import Foundation
-import TSCBasic
 
 /// Represents a message output by xcbuild.
 public enum XCBuildMessage {
@@ -122,17 +122,18 @@ public enum XCBuildMessage {
     case taskOutput(TaskOutputInfo)
     case taskComplete(TaskCompleteInfo)
     case targetDiagnostic(TargetDiagnosticInfo)
+    case unknown
 }
 
-extension XCBuildMessage.BuildDiagnosticInfo: Codable, Equatable {}
-extension XCBuildMessage.BuildCompletedInfo.Result: Codable, Equatable {}
-extension XCBuildMessage.BuildCompletedInfo: Codable, Equatable {}
-extension XCBuildMessage.BuildOutputInfo: Codable, Equatable {}
-extension XCBuildMessage.TargetUpToDateInfo: Codable, Equatable {}
-extension XCBuildMessage.TaskDiagnosticInfo: Codable, Equatable {}
-extension XCBuildMessage.TargetDiagnosticInfo: Codable, Equatable {}
+extension XCBuildMessage.BuildDiagnosticInfo: Codable, Equatable, Sendable {}
+extension XCBuildMessage.BuildCompletedInfo.Result: Codable, Equatable, Sendable {}
+extension XCBuildMessage.BuildCompletedInfo: Codable, Equatable, Sendable {}
+extension XCBuildMessage.BuildOutputInfo: Codable, Equatable, Sendable {}
+extension XCBuildMessage.TargetUpToDateInfo: Codable, Equatable, Sendable {}
+extension XCBuildMessage.TaskDiagnosticInfo: Codable, Equatable, Sendable {}
+extension XCBuildMessage.TargetDiagnosticInfo: Codable, Equatable, Sendable {}
 
-extension XCBuildMessage.DidUpdateProgressInfo: Codable, Equatable {
+extension XCBuildMessage.DidUpdateProgressInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case message
         case percentComplete
@@ -147,8 +148,8 @@ extension XCBuildMessage.DidUpdateProgressInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage.TargetStartedInfo.Kind: Codable, Equatable {}
-extension XCBuildMessage.TargetStartedInfo: Codable, Equatable {
+extension XCBuildMessage.TargetStartedInfo.Kind: Codable, Equatable, Sendable {}
+extension XCBuildMessage.TargetStartedInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case targetID = "id"
         case targetGUID = "guid"
@@ -165,7 +166,7 @@ extension XCBuildMessage.TargetStartedInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage.TargetCompleteInfo: Codable, Equatable {
+extension XCBuildMessage.TargetCompleteInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case targetID = "id"
     }
@@ -176,7 +177,7 @@ extension XCBuildMessage.TargetCompleteInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage.TaskUpToDateInfo: Codable, Equatable {
+extension XCBuildMessage.TaskUpToDateInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case targetID
         case taskSignature = "signature"
@@ -191,7 +192,7 @@ extension XCBuildMessage.TaskUpToDateInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage.TaskStartedInfo: Codable, Equatable {
+extension XCBuildMessage.TaskStartedInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case taskID = "id"
         case targetID
@@ -216,7 +217,7 @@ extension XCBuildMessage.TaskStartedInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage.TaskOutputInfo: Codable, Equatable {
+extension XCBuildMessage.TaskOutputInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case taskID
         case data
@@ -229,8 +230,8 @@ extension XCBuildMessage.TaskOutputInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage.TaskCompleteInfo.Result: Codable, Equatable {}
-extension XCBuildMessage.TaskCompleteInfo: Codable, Equatable {
+extension XCBuildMessage.TaskCompleteInfo.Result: Codable, Equatable, Sendable {}
+extension XCBuildMessage.TaskCompleteInfo: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case taskID = "id"
         case result
@@ -245,7 +246,7 @@ extension XCBuildMessage.TaskCompleteInfo: Codable, Equatable {
     }
 }
 
-extension XCBuildMessage: Codable, Equatable {
+extension XCBuildMessage: Codable, Equatable, Sendable {
     enum CodingKeys: CodingKey {
         case kind
     }
@@ -285,7 +286,7 @@ extension XCBuildMessage: Codable, Equatable {
         case "targetDiagnostic":
             self = try .targetDiagnostic(TargetDiagnosticInfo(from: decoder))
         default:
-            throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "invalid kind \(kind)")
+            self = .unknown
         }
     }
 
@@ -335,6 +336,9 @@ extension XCBuildMessage: Codable, Equatable {
         case let .targetDiagnostic(info):
             try container.encode("targetDiagnostic", forKey: .kind)
             try info.encode(to: encoder)
+        case .unknown:
+            assertionFailure()
+            break
         }
     }
 }

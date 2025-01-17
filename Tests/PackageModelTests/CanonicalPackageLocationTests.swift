@@ -12,8 +12,6 @@
 
 import XCTest
 
-import TSCBasic
-
 @testable import PackageModel
 
 final class CanonicalPackageLocationTests: XCTestCase {
@@ -325,5 +323,20 @@ final class CanonicalPackageLocationTests: XCTestCase {
             CanonicalPackageLocation("user:sw0rdf1sh!@example.com:/mona/Linked:List.git").description,
             "example.com/mona/linked:list"
         )
+    }
+
+    func testScheme() {
+        XCTAssertEqual(CanonicalPackageURL("https://example.com/mona/LinkedList").scheme, "https")
+        XCTAssertEqual(CanonicalPackageURL("git@example.com/mona/LinkedList").scheme, "ssh")
+        XCTAssertEqual(CanonicalPackageURL("git@example.com:mona/LinkedList.git ").scheme, "ssh")
+        XCTAssertEqual(CanonicalPackageURL("ssh://mona@example.com/~/LinkedList.git").scheme, "ssh")
+        XCTAssertEqual(CanonicalPackageURL("file:///Users/mona/LinkedList").scheme, "file")
+        XCTAssertEqual(CanonicalPackageURL("example.com:443/mona/LinkedList").scheme, nil)
+        XCTAssertEqual(CanonicalPackageURL("example.com/mona/%F0%9F%94%97List").scheme, nil)
+        XCTAssertEqual(CanonicalPackageURL("example.com/mona/LinkedList.git").scheme, nil)
+        XCTAssertEqual(CanonicalPackageURL("example.com/mona/LinkedList/").scheme, nil)
+        XCTAssertEqual(CanonicalPackageURL("example.com/mona/LinkedList#installation").scheme, nil)
+        XCTAssertEqual(CanonicalPackageURL("example.com/mona/LinkedList?utm_source=forums.swift.org").scheme, nil)
+        XCTAssertEqual(CanonicalPackageURL("user:sw0rdf1sh!@example.com:/mona/Linked:List.git").scheme, nil)
     }
 }

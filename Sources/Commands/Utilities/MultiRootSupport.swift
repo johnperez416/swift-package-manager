@@ -11,17 +11,17 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
+import CoreCommands
 import Foundation
 #if canImport(FoundationXML)
 import FoundationXML
 #endif
 import class PackageModel.Manifest
-import TSCBasic
 
 /// A bare minimum loader for Xcode workspaces.
 ///
 /// Warning: This is only useful for debugging workspaces that contain Swift packages.
-public struct XcodeWorkspaceLoader {
+public struct XcodeWorkspaceLoader: WorkspaceLoader {
 
     /// The parsed location.
     private struct Location {
@@ -45,7 +45,7 @@ public struct XcodeWorkspaceLoader {
 
     /// Load the given workspace and return the file ref paths from it.
     public func load(workspace: AbsolutePath) throws -> [AbsolutePath] {
-        let path = workspace.appending(component: "contents.xcworkspacedata")
+        let path = workspace.appending("contents.xcworkspacedata")
         let contents: Data = try self.fileSystem.readFileContents(path)
 
         let delegate = ParserDelegate(observabilityScope: self.observabilityScope)
@@ -64,7 +64,7 @@ public struct XcodeWorkspaceLoader {
             case .absolute:
                 path = try AbsolutePath(validating: location.path)
             case .group:
-                path = AbsolutePath(location.path, relativeTo: workspace.parentDirectory)
+                path = try AbsolutePath(validating: location.path, relativeTo: workspace.parentDirectory)
             }
 
             if self.fileSystem.exists(path.appending(component: Manifest.filename)) {

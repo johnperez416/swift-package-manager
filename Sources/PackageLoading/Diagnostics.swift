@@ -12,11 +12,16 @@
 
 import Basics
 import PackageModel
-import TSCBasic
 
 extension Basics.Diagnostic {
-    static func targetHasNoSources(targetPath: String, target: String) -> Self {
-        .warning("Source files for target \(target) should be located under \(targetPath)")
+    static func targetHasNoSources(name: String, type: TargetDescription.TargetKind, shouldSuggestRelaxedSourceDir: Bool) -> Self {
+        let folderName = PackageBuilder.suggestedPredefinedSourceDirectory(type: type)
+        var clauses = ["Source files for target \(name) should be located under '\(folderName)/\(name)'"]
+        if shouldSuggestRelaxedSourceDir {
+            clauses.append("'\(folderName)'")
+        }
+        clauses.append("or a custom sources path can be set with the 'path' property in Package.swift")
+        return .warning(clauses.joined(separator: ", "))
     }
 
     static func targetNameHasIncorrectCase(target: String) -> Self {
@@ -32,12 +37,16 @@ extension Basics.Diagnostic {
         switch product.type {
         case .library(.automatic):
             typeString = ""
-        case .executable, .snippet, .plugin, .test,
+        case .executable, .snippet, .plugin, .test, .macro,
              .library(.dynamic), .library(.static):
             typeString = " (\(product.type))"
         }
 
         return .warning("ignoring duplicate product '\(product.name)'\(typeString)")
+    }
+
+    static func duplicateProduct(name: String, package: String) -> Self {
+        return .warning("ignoring duplicate product '\(name)' from package '\(package)'")
     }
 
     static func duplicateTargetDependency(dependency: String, target: String, package: String) -> Self {

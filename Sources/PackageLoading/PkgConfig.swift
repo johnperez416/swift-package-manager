@@ -12,7 +12,9 @@
 
 import Basics
 import Foundation
-import TSCBasic
+import OrderedCollections
+
+import class Basics.AsyncProcess
 
 /// Information on an individual `pkg-config` supported package.
 public struct PkgConfig {
@@ -44,6 +46,7 @@ public struct PkgConfig {
         name: String,
         additionalSearchPaths: [AbsolutePath]? = .none,
         brewPrefix: AbsolutePath? = .none,
+        sysrootDir: AbsolutePath? = .none,
         fileSystem: FileSystem,
         observabilityScope: ObservabilityScope
     ) throws {
@@ -51,6 +54,7 @@ public struct PkgConfig {
             name: name,
             additionalSearchPaths: additionalSearchPaths ?? [],
             brewPrefix: brewPrefix,
+            sysrootDir: sysrootDir,
             loadingContext: LoadingContext(),
             fileSystem: fileSystem,
             observabilityScope: observabilityScope
@@ -61,6 +65,7 @@ public struct PkgConfig {
         name: String,
         additionalSearchPaths: [AbsolutePath],
         brewPrefix: AbsolutePath?,
+        sysrootDir: AbsolutePath?,
         loadingContext: LoadingContext,
         fileSystem: FileSystem,
         observabilityScope: ObservabilityScope
@@ -76,13 +81,13 @@ public struct PkgConfig {
             let pkgFileFinder = PCFileFinder(brewPrefix: brewPrefix)
             self.pcFile = try pkgFileFinder.locatePCFile(
                 name: name,
-                customSearchPaths: PkgConfig.envSearchPaths + additionalSearchPaths,
+                customSearchPaths: try PkgConfig.envSearchPaths + additionalSearchPaths,
                 fileSystem: fileSystem,
                 observabilityScope: observabilityScope
             )
         }
 
-        var parser = try PkgConfigParser(pcFile: pcFile, fileSystem: fileSystem)
+        var parser = try PkgConfigParser(pcFile: pcFile, fileSystem: fileSystem, sysrootDir: Environment.current["PKG_CONFIG_SYSROOT_DIR"])
         try parser.parse()
 
         func getFlags(from dependencies: [String]) throws -> (cFlags: [String], libs: [String]) {
@@ -100,6 +105,7 @@ public struct PkgConfig {
                     name: dep,
                     additionalSearchPaths: additionalSearchPaths,
                     brewPrefix: brewPrefix,
+                    sysrootDir: sysrootDir,
                     loadingContext: loadingContext,
                     fileSystem: fileSystem,
                     observabilityScope: observabilityScope
@@ -122,14 +128,16 @@ public struct PkgConfig {
     }
 
     private static var envSearchPaths: [AbsolutePath] {
-        if let configPath = ProcessEnv.vars["PKG_CONFIG_PATH"] {
-#if os(Windows)
-            return configPath.split(separator: ";").map({ AbsolutePath(String($0)) })
-#else
-            return configPath.split(separator: ":").map({ AbsolutePath(String($0)) })
-#endif
+        get throws {
+            if let configPath = Environment.current["PKG_CONFIG_PATH"] {
+                #if os(Windows)
+                return try configPath.split(separator: ";").map({ try AbsolutePath(validating: String($0)) })
+                #else
+                return try configPath.split(separator: ":").map({ try AbsolutePath(validating: String($0)) })
+                #endif
+            }
+            return []
         }
-        return []
     }
 }
 
@@ -157,13 +165,93 @@ internal struct PkgConfigParser {
     public private(set) var privateDependencies = [String]()
     public private(set) var cFlags = [String]()
     public private(set) var libs = [String]()
+    public private(set) var sysrootDir: String?
 
-    public init(pcFile: AbsolutePath, fileSystem: FileSystem) throws {
+    public init(pcFile: AbsolutePath, fileSystem: FileSystem, sysrootDir: String?) throws {
         guard fileSystem.isFile(pcFile) else {
             throw StringError("invalid pcfile \(pcFile)")
         }
         self.pcFile = pcFile
         self.fileSystem = fileSystem
+        self.sysrootDir = sysrootDir
+    }
+
+    // Compress repeated path separators to one.
+    private func compressPathSeparators(_ value: String) -> String {
+        let components = value.components(separatedBy: "/").filter { !$0.isEmpty }.joined(separator: "/")
+        if value.hasPrefix("/") {
+            return "/" + components
+        } else {
+            return components
+        }
+    }
+
+    // Trim duplicate sysroot prefixes, matching the approach of pkgconf
+    private func trimDuplicateSysroot(_ value: String) -> String {
+        // If sysroot has been applied more than once, remove the first instance.
+        // pkgconf makes this check after variable expansion to handle rare .pc
+        // files which expand ${pc_sysrootdir} directly:
+        //    https://github.com/pkgconf/pkgconf/issues/123
+        //
+        // For example:
+        //       /sysroot/sysroot/remainder -> /sysroot/remainder
+        //
+        // However, pkgconf's algorithm searches for an additional sysrootdir anywhere in
+        // the string after the initial prefix, rather than looking for two sysrootdir prefixes
+        // directly next to each other:
+        //
+        //     /sysroot/filler/sysroot/remainder -> /filler/sysroot/remainder
+        //
+        // It might seem more logical not to strip sysroot in this case, as it is not a double
+        // prefix, but for compatibility trimDuplicateSysroot is faithful to pkgconf's approach
+        // in the functions `pkgconf_tuple_parse` and `should_rewrite_sysroot`.
+
+        // Only trim if sysroot is defined with a meaningful value
+        guard let sysrootDir, sysrootDir != "/" else {
+           return value
+        }
+
+        // Only trim absolute paths starting with sysroot
+        guard value.hasPrefix("/"), value.hasPrefix(sysrootDir) else {
+            return value
+        }
+
+        // If sysroot appears multiple times, trim the prefix
+        // N.B. sysroot can appear anywhere in the remainder
+        // of the value, mirroring pkgconf's logic
+        let pathSuffix = value.dropFirst(sysrootDir.count)
+        if pathSuffix.contains(sysrootDir) {
+            return String(pathSuffix)
+        } else {
+            return value
+        }
+    }
+
+    // Apply sysroot to generated paths, matching the approach of pkgconf
+    private func applySysroot(_ value: String) -> String {
+        // The two main pkg-config implementations handle sysroot differently:
+        //
+        //     `pkg-config` (freedesktop.org) prepends sysroot after variable expansion, when in creates the compiler flag lists
+        //     `pkgconf` prepends sysroot to variables when they are defined, so sysroot is included when they are expanded
+        //
+        // pkg-config's method skips single character compiler flags, such as '-I' and '-L', and has special cases for longer options.
+        // It does not handle spaces between the flags and their values properly, and prepends sysroot multiple times in some cases,
+        // such as when the .pc file uses the sysroot_dir variable directly or has been rewritten to hard-code the sysroot prefix.
+        //
+        // pkgconf's method handles spaces correctly, although it also requires extra checks to ensure that sysroot is not applied
+        // more than once.
+        //
+        // In 2024 pkg-config is the more popular option according to Homebrew installation statistics, but the major Linux distributions
+        // have generally switched to pkgconf.
+        //
+        // We will use pkgconf's method here as it seems more robust than pkg-config's, and pkgconf's greater popularity on Linux
+        // means libraries developed there may depend on the specific way it handles .pc files.
+
+        if value.hasPrefix("/"), let sysrootDir, !value.hasPrefix(sysrootDir) {
+            return compressPathSeparators(trimDuplicateSysroot(sysrootDir + value))
+        } else {
+            return compressPathSeparators(trimDuplicateSysroot(value))
+        }
     }
 
     public mutating func parse() throws {
@@ -178,7 +266,9 @@ internal struct PkgConfigParser {
         variables["pcfiledir"] = pcFile.parentDirectory.pathString
 
         // Add pc_sysrootdir variable. This is the path of the sysroot directory for pc files.
-        variables["pc_sysrootdir"] = ProcessEnv.vars["PKG_CONFIG_SYSROOT_DIR"] ?? AbsolutePath.root.pathString
+        // pkgconf does not define pc_sysrootdir if the path of the .pc file is outside sysrootdir.
+        // SwiftPM does not currently make that check.
+        variables["pc_sysrootdir"] = sysrootDir ?? AbsolutePath.root.pathString
 
         let fileContents: String = try fileSystem.readFileContents(pcFile)
         for line in fileContents.components(separatedBy: "\n") {
@@ -194,7 +284,7 @@ internal struct PkgConfigParser {
                 // Found a variable.
                 let (name, maybeValue) = line.spm_split(around: "=")
                 let value = maybeValue?.spm_chuzzle() ?? ""
-                variables[name.spm_chuzzle() ?? ""] = try resolveVariables(value)
+                variables[name.spm_chuzzle() ?? ""] = try applySysroot(resolveVariables(value))
             } else {
                 // Unexpected thing in the pc file, abort.
                 throw PkgConfigError.parsingError("Unexpected line: \(line) in \(pcFile)")
@@ -208,14 +298,14 @@ internal struct PkgConfigParser {
         }
         let (key, maybeValue) = line.spm_split(around: ":")
         let value = try resolveVariables(maybeValue?.spm_chuzzle() ?? "")
-        switch key {
-        case "Requires":
+        switch key.lowercased() {
+        case "requires":
             dependencies = try parseDependencies(value)
-        case "Requires.private":
+        case "requires.private":
             privateDependencies = try parseDependencies(value)
-        case "Libs":
+        case "libs":
             libs = try splitEscapingSpace(value)
-        case "Cflags":
+        case "cflags":
             cFlags = try splitEscapingSpace(value)
         default:
             break
@@ -379,11 +469,11 @@ internal struct PCFileFinder {
     /// By default, this is combined with the search paths inferred from
     /// `pkg-config` itself.
     static let searchPaths = [
-        AbsolutePath("/usr/local/lib/pkgconfig"),
-        AbsolutePath("/usr/local/share/pkgconfig"),
-        AbsolutePath("/usr/lib/pkgconfig"),
-        AbsolutePath("/usr/share/pkgconfig"),
-    ]
+        try? AbsolutePath(validating: "/usr/local/lib/pkgconfig"),
+        try? AbsolutePath(validating: "/usr/local/share/pkgconfig"),
+        try? AbsolutePath(validating: "/usr/lib/pkgconfig"),
+        try? AbsolutePath(validating: "/usr/share/pkgconfig"),
+    ].compactMap({ $0 })
 
     /// Get search paths from `pkg-config` itself to locate `.pc` files.
     ///
@@ -392,14 +482,14 @@ internal struct PCFileFinder {
     private init(pkgConfigPath: String) {
         if PCFileFinder.pkgConfigPaths == nil {
             do {
-                let searchPaths = try TSCBasic.Process.checkNonZeroExit(args:
+                let searchPaths = try AsyncProcess.checkNonZeroExit(args:
                     pkgConfigPath, "--variable", "pc_path", "pkg-config"
                 ).spm_chomp()
 
 #if os(Windows)
-                PCFileFinder.pkgConfigPaths = searchPaths.split(separator: ";").map({ AbsolutePath(String($0)) })
+                PCFileFinder.pkgConfigPaths = try searchPaths.split(separator: ";").map({ try AbsolutePath(validating: String($0)) })
 #else
-                PCFileFinder.pkgConfigPaths = searchPaths.split(separator: ":").map({ AbsolutePath(String($0)) })
+                PCFileFinder.pkgConfigPaths = try searchPaths.split(separator: ":").map({ try AbsolutePath(validating: String($0)) })
 #endif
             } catch {
                 PCFileFinder.shouldEmitPkgConfigPathsDiagnostic = true

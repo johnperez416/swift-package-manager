@@ -10,24 +10,38 @@
 //
 //===----------------------------------------------------------------------===//
 
-/// The description of an individual target.
-public struct TargetDescription: Equatable, Encodable {
+/// The description of an individual module.
+public struct TargetDescription: Hashable, Encodable, Sendable {
+    @available(*, deprecated, renamed: "TargetKind")
+    public typealias TargetType = TargetKind
 
-    /// The target type.
-    public enum TargetType: String, Equatable, Encodable {
+    /// The target kind.
+    public enum TargetKind: String, Hashable, Encodable, Sendable {
         case regular
         case executable
         case test
         case system
         case binary
         case plugin
+        case `macro`
     }
 
     /// Represents a target's dependency on another entity.
-    public enum Dependency: Equatable {
+    public enum Dependency: Hashable, Sendable {
         case target(name: String, condition: PackageConditionDescription?)
         case product(name: String, package: String?, moduleAliases: [String: String]? = nil, condition: PackageConditionDescription?)
         case byName(name: String, condition: PackageConditionDescription?)
+
+        var condition: PackageConditionDescription? {
+            switch self {
+            case .target(_, let condition):
+                return condition
+            case .product(_, _, _, let condition):
+                return condition
+            case .byName(_, let condition):
+                return condition
+            }
+        }
 
         public static func target(name: String) -> Dependency {
             return .target(name: name, condition: nil)
@@ -38,13 +52,14 @@ public struct TargetDescription: Equatable, Encodable {
         }
     }
 
-    public struct Resource: Encodable, Equatable {
-        public enum Rule: Encodable, Equatable {
+    public struct Resource: Encodable, Hashable, Sendable {
+        public enum Rule: Encodable, Hashable, Sendable {
             case process(localization: Localization?)
             case copy
+            case embedInCode
         }
 
-        public enum Localization: String, Encodable {
+        public enum Localization: String, Encodable, Sendable {
             case `default`
             case base
         }
@@ -63,6 +78,10 @@ public struct TargetDescription: Equatable, Encodable {
 
     /// The name of the target.
     public let name: String
+
+    /// If true, access to package declarations from other targets is allowed.
+    /// APIs is not allowed from outside.
+    public let packageAccess: Bool
 
     /// The custom path of the target.
     public let path: String?
@@ -87,13 +106,13 @@ public struct TargetDescription: Equatable, Encodable {
     }
 
     /// The declared target dependencies.
-    public let dependencies: [Dependency]
+    public package(set) var dependencies: [Dependency]
 
     /// The custom public headers path.
     public let publicHeadersPath: String?
 
     /// The type of target.
-    public let type: TargetType
+    public let type: TargetKind
 
     /// The pkg-config name of a system library target.
     public let pkgConfig: String?
@@ -105,18 +124,38 @@ public struct TargetDescription: Equatable, Encodable {
     public let pluginCapability: PluginCapability?
     
     /// Represents the declared capability of a package plugin.
-    public enum PluginCapability: Equatable {
+    public enum PluginCapability: Hashable, Sendable {
         case buildTool
         case command(intent: PluginCommandIntent, permissions: [PluginPermission])
     }
     
-    public enum PluginCommandIntent: Equatable, Codable {
+    public enum PluginCommandIntent: Hashable, Codable, Sendable {
         case documentationGeneration
         case sourceCodeFormatting
         case custom(verb: String, description: String)
     }
 
-    public enum PluginPermission: Equatable, Codable {
+    public enum PluginNetworkPermissionScope: Hashable, Codable, Sendable {
+        case none
+        case local(ports: [Int])
+        case all(ports: [Int])
+        case docker
+        case unixDomainSocket
+
+        public init?(_ scopeString: String, ports: [Int]) {
+            switch scopeString {
+            case "none": self = .none
+            case "local": self = .local(ports: ports)
+            case "all": self = .all(ports: ports)
+            case "docker": self = .docker
+            case "unix-socket": self = .unixDomainSocket
+            default: return nil
+            }
+        }
+    }
+
+    public enum PluginPermission: Hashable, Codable, Sendable {
+        case allowNetworkConnections(scope: PluginNetworkPermissionScope, reason: String)
         case writeToPackageDirectory(reason: String)
     }
 
@@ -130,7 +169,7 @@ public struct TargetDescription: Equatable, Encodable {
     public let pluginUsages: [PluginUsage]?
 
     /// Represents a target's usage of a plugin target or product.
-    public enum PluginUsage: Equatable {
+    public enum PluginUsage: Hashable, Sendable {
         case plugin(name: String, package: String?)
     }
 
@@ -143,7 +182,8 @@ public struct TargetDescription: Equatable, Encodable {
         sources: [String]? = nil,
         resources: [Resource] = [],
         publicHeadersPath: String? = nil,
-        type: TargetType = .regular,
+        type: TargetKind = .regular,
+        packageAccess: Bool = true,
         pkgConfig: String? = nil,
         providers: [SystemPackageProviderDescription]? = nil,
         pluginCapability: PluginCapability? = nil,
@@ -189,6 +229,13 @@ public struct TargetDescription: Equatable, Encodable {
             if pluginCapability == nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "pluginCapability") }
             if !settings.isEmpty { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "settings") }
             if pluginUsages != nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "pluginUsages") }
+        case .macro:
+            if url != nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "url") }
+            if !resources.isEmpty { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "resources") }
+            if publicHeadersPath != nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "publicHeadersPath") }
+            if pkgConfig != nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "pkgConfig") }
+            if providers != nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "providers") }
+            if pluginCapability != nil { throw Error.disallowedPropertyInTarget(targetName: name, propertyName: "pluginCapability") }
         }
 
         self.name = name
@@ -200,6 +247,7 @@ public struct TargetDescription: Equatable, Encodable {
         self.exclude = exclude
         self.resources = resources
         self.type = type
+        self.packageAccess = packageAccess
         self.pkgConfig = pkgConfig
         self.providers = providers
         self.pluginCapability = pluginCapability

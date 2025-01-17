@@ -11,9 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
+import _Concurrency
 import Dispatch
 import Foundation
-import TSCBasic
 import PackageModel
 
 /// Manages a collection of bare repositories.
@@ -50,6 +50,8 @@ public class RepositoryManager: Cancellable {
     // tracks outstanding lookups for cancellation
     private var outstandingLookups = ThreadSafeKeyValueStore<UUID, (repository: RepositorySpecifier, completion: (Result<RepositoryHandle, Error>) -> Void, queue: DispatchQueue)>()
 
+    private var emitNoConnectivityWarning = ThreadSafeBox<Bool>(true)
+
     /// Create a new empty manager.
     ///
     /// - Parameters:
@@ -82,11 +84,32 @@ public class RepositoryManager: Cancellable {
         self.delegate = delegate
 
         // this queue and semaphore is used to limit the amount of concurrent git operations taking place
-        let maxConcurrentOperations = min(maxConcurrentOperations ?? 3, Concurrency.maxOperations)
+        let maxConcurrentOperations = max(1, maxConcurrentOperations ?? 3*Concurrency.maxOperations/4)
         self.lookupQueue = OperationQueue()
         self.lookupQueue.name = "org.swift.swiftpm.repository-manager"
         self.lookupQueue.maxConcurrentOperationCount = maxConcurrentOperations
         self.concurrencySemaphore = DispatchSemaphore(value: maxConcurrentOperations)
+    }
+
+    public func lookup(
+        package: PackageIdentity,
+        repository: RepositorySpecifier,
+        updateStrategy: RepositoryUpdateStrategy,
+        observabilityScope: ObservabilityScope,
+        delegateQueue: DispatchQueue,
+        callbackQueue: DispatchQueue
+    ) async throws -> RepositoryHandle {
+        try await withCheckedThrowingContinuation { continuation in
+            self.lookup(
+                package: package,
+                repository: repository,
+                updateStrategy: updateStrategy,
+                observabilityScope: observabilityScope,
+                delegateQueue: delegateQueue,
+                callbackQueue: callbackQueue,
+                completion: { continuation.resume(with: $0) }
+            )
+        }
     }
 
     /// Get a handle to a repository.
@@ -99,15 +122,16 @@ public class RepositoryManager: Cancellable {
     /// - Parameters:
     ///   - package: The package identity of the repository to fetch,
     ///   - repository: The repository to look up.
-    ///   - skipUpdate: If a repository is available, skip updating it.
+    ///   - updateStrategy: strategy to update the repository.
     ///   - observabilityScope: The observability scope
     ///   - delegateQueue: Dispatch queue for delegate events
     ///   - callbackQueue: Dispatch queue for callbacks
     ///   - completion: The completion block that should be called after lookup finishes.
+    @available(*, noasync, message: "Use the async alternative")
     public func lookup(
         package: PackageIdentity,
         repository: RepositorySpecifier,
-        skipUpdate: Bool,
+        updateStrategy: RepositoryUpdateStrategy,
         observabilityScope: ObservabilityScope,
         delegateQueue: DispatchQueue,
         callbackQueue: DispatchQueue,
@@ -151,7 +175,7 @@ public class RepositoryManager: Cancellable {
                         try self.lookup(
                             package: package,
                             repository: repository,
-                            skipUpdate: skipUpdate,
+                            updateStrategy: updateStrategy,
                             observabilityScope: observabilityScope,
                             delegateQueue: delegateQueue
                         )
@@ -170,7 +194,7 @@ public class RepositoryManager: Cancellable {
                 try self.lookup(
                     package: package,
                     repository: repository,
-                    skipUpdate: skipUpdate,
+                    updateStrategy: updateStrategy,
                     observabilityScope: observabilityScope,
                     delegateQueue: delegateQueue
                 )
@@ -185,35 +209,41 @@ public class RepositoryManager: Cancellable {
     // sync func and roll the logic into the async version above
     private func lookup(
         package: PackageIdentity,
-        repository: RepositorySpecifier,
-        skipUpdate: Bool,
+        repository repositorySpecifier: RepositorySpecifier,
+        updateStrategy: RepositoryUpdateStrategy,
         observabilityScope: ObservabilityScope,
         delegateQueue: DispatchQueue
     ) throws -> RepositoryHandle {
-        let relativePath = repository.storagePath()
+        let relativePath = try repositorySpecifier.storagePath()
         let repositoryPath = self.path.appending(relativePath)
-        let handle = RepositoryHandle(manager: self, repository: repository, subpath: relativePath)
+        let handle = RepositoryHandle(manager: self, repository: repositorySpecifier, subpath: relativePath)
 
         // check if a repository already exists
         // errors when trying to check if a repository already exists are legitimate
         // and recoverable, and as such can be ignored
-        if (try? self.provider.repositoryExists(at: repositoryPath)) ?? false {
-            // update if necessary and return early
-            // skip update if not needed
-            if skipUpdate {
-                return handle
-            }
-            // Update the repository when it is being looked up.
-            let start = DispatchTime.now()
-            delegateQueue.async {
-                self.delegate?.willUpdate(package: package, repository: handle.repository)
-            }
+        quick: if (try? self.provider.isValidDirectory(repositoryPath)) ?? false {
             let repository = try handle.open()
-            try repository.fetch()
-            let duration = start.distance(to: .now())
-            delegateQueue.async {
-                self.delegate?.didUpdate(package: package, repository: handle.repository, duration: duration)
+
+            guard ((try? self.provider.isValidDirectory(repositoryPath, for: repositorySpecifier)) ?? false) else {
+                observabilityScope.emit(warning: "\(repositoryPath) is not valid git repository for '\(repositorySpecifier.location)', will fetch again.")
+                break quick
             }
+
+            // Update the repository if needed
+            if self.fetchRequired(repository: repository, updateStrategy: updateStrategy) {
+                let start = DispatchTime.now()
+
+                delegateQueue.async {
+                    self.delegate?.willUpdate(package: package, repository: handle.repository)
+                }
+
+                try repository.fetch()
+                let duration = start.distance(to: .now())
+                delegateQueue.async {
+                    self.delegate?.didUpdate(package: package, repository: handle.repository, duration: duration)
+                }
+            }
+
             return handle
         }
 
@@ -235,6 +265,7 @@ public class RepositoryManager: Cancellable {
                 package: package,
                 handle: handle,
                 repositoryPath: repositoryPath,
+                updateStrategy: updateStrategy,
                 observabilityScope: observabilityScope,
                 delegateQueue: delegateQueue
             )
@@ -276,6 +307,7 @@ public class RepositoryManager: Cancellable {
         package: PackageIdentity,
         handle: RepositoryHandle,
         repositoryPath: AbsolutePath,
+        updateStrategy: RepositoryUpdateStrategy,
         observabilityScope: ObservabilityScope,
         delegateQueue: DispatchQueue
     ) throws -> FetchDetails {
@@ -298,10 +330,10 @@ public class RepositoryManager: Cancellable {
         }
         
         // We are expecting handle.repository.url to always be a resolved absolute path.
-        let shouldCacheLocalPackages = ProcessEnv.vars["SWIFTPM_TESTS_PACKAGECACHE"] == "1" || cacheLocalPackages
+        let shouldCacheLocalPackages = Environment.current["SWIFTPM_TESTS_PACKAGECACHE"] == "1" || cacheLocalPackages
 
-        if let cachePath = self.cachePath, !(handle.repository.isLocal && !shouldCacheLocalPackages) {
-            let cachedRepositoryPath = cachePath.appending(handle.repository.storagePath())
+        if let cachePath, !(handle.repository.isLocal && !shouldCacheLocalPackages) {
+            let cachedRepositoryPath = try cachePath.appending(handle.repository.storagePath())
             do {
                 try self.initializeCacheIfNeeded(cachePath: cachePath)
                 try self.fileSystem.withLock(on: cachePath, type: .shared) {
@@ -309,7 +341,9 @@ public class RepositoryManager: Cancellable {
                         // Fetch the repository into the cache.
                         if (self.fileSystem.exists(cachedRepositoryPath)) {
                             let repo = try self.provider.open(repository: handle.repository, at: cachedRepositoryPath)
-                            try repo.fetch(progress: updateFetchProgress(progress:))
+                            if self.fetchRequired(repository: repo, updateStrategy: updateStrategy) {
+                                try repo.fetch(progress: updateFetchProgress(progress:))
+                            }
                             cacheUsed = true
                         } else {
                             try self.provider.fetch(repository: handle.repository, to: cachedRepositoryPath, progressHandler: updateFetchProgress(progress:))
@@ -325,12 +359,30 @@ public class RepositoryManager: Cancellable {
                     }
                 }
             } catch {
-                cacheUsed = false
-                // Fetch without populating the cache in the case of an error.
-                observabilityScope.emit(warning: "skipping cache due to an error: \(error)")
-                // it is possible that we already created the directory from failed attempts, so clear leftover data if present.
-                try? self.fileSystem.removeFileTree(repositoryPath)
-                try self.provider.fetch(repository: handle.repository, to: repositoryPath, progressHandler: updateFetchProgress(progress:))
+                // If we are offline and have a valid cached repository, use the cache anyway.
+                if try isOffline(error) && self.provider.isValidDirectory(cachedRepositoryPath, for: handle.repository) {
+                    // For the first offline use in the lifetime of this repository manager, emit a warning.
+                    if self.emitNoConnectivityWarning.get(default: false) {
+                        self.emitNoConnectivityWarning.put(false)
+                        observabilityScope.emit(warning: "no connectivity, using previously cached repository state")
+                    }
+                    observabilityScope.emit(info: "using previously cached repository state for \(package)")
+
+                    cacheUsed = true
+                    // Copy the repository from the cache into the repository path.
+                    try self.fileSystem.createDirectory(repositoryPath.parentDirectory, recursive: true)
+                    try self.provider.copy(from: cachedRepositoryPath, to: repositoryPath)
+                } else {
+                    cacheUsed = false
+                    // Fetch without populating the cache in the case of an error.
+                    observabilityScope.emit(
+                        warning: "skipping cache due to an error",
+                        underlyingError: error
+                    )
+                    // it is possible that we already created the directory from failed attempts, so clear leftover data if present.
+                    try? self.fileSystem.removeFileTree(repositoryPath)
+                    try self.provider.fetch(repository: handle.repository, to: repositoryPath, progressHandler: updateFetchProgress(progress:))
+                }
             }
         } else {
             // it is possible that we already created the directory from failed attempts, so clear leftover data if present.
@@ -341,8 +393,30 @@ public class RepositoryManager: Cancellable {
         return FetchDetails(fromCache: cacheUsed, updatedCache: cacheUpdated)
     }
 
+    private func fetchRequired(
+        repository: Repository,
+        updateStrategy: RepositoryUpdateStrategy
+    ) -> Bool {
+        switch updateStrategy {
+        case .never:
+            return false
+        case .always:
+            return true
+        case .ifNeeded(let revision):
+            return !repository.exists(revision: revision)
+        }
+    }
+
+    /// Open a working copy checkout at a path
     public func openWorkingCopy(at path: AbsolutePath) throws -> WorkingCheckout {
         try self.provider.openWorkingCopy(at: path)
+    }
+
+    /// Validate a working copy check is aligned with its repository setup
+    public func isValidWorkingCopy(_ workingCopy: WorkingCheckout, for repository: RepositorySpecifier) throws -> Bool {
+        let relativePath = try repository.storagePath()
+        let repositoryPath = self.path.appending(relativePath)
+        return workingCopy.isAlternateObjectStoreValid(expected: repositoryPath)
     }
 
     /// Open a repository from a handle.
@@ -368,30 +442,37 @@ public class RepositoryManager: Cancellable {
 
     /// Removes the repository.
     public func remove(repository: RepositorySpecifier) throws {
-        let relativePath = repository.storagePath()
+        let relativePath = try repository.storagePath()
         let repositoryPath = self.path.appending(relativePath)
         try self.fileSystem.removeFileTree(repositoryPath)
     }
 
     /// Returns true if the directory is valid git location.
-    public func isValidDirectory(_ directory: AbsolutePath) -> Bool {
-        self.provider.isValidDirectory(directory)
+    public func isValidDirectory(_ directory: AbsolutePath) throws -> Bool {
+        try self.provider.isValidDirectory(directory)
     }
 
-    /// Returns true if the git reference name is well formed.
-    public func isValidRefFormat(_ ref: String) -> Bool {
-        self.provider.isValidRefFormat(ref)
+    /// Returns true if the directory is valid git location for the specified repository
+    public func isValidDirectory(_ directory: AbsolutePath, for repository: RepositorySpecifier) throws -> Bool {
+        try self.provider.isValidDirectory(directory, for: repository)
     }
 
     /// Reset the repository manager.
     ///
     /// Note: This also removes the cloned repositories from the disk.
-    public func reset() throws {
-        try self.fileSystem.removeFileTree(self.path)
+    public func reset(observabilityScope: ObservabilityScope) {
+        do {
+            try self.fileSystem.removeFileTree(self.path)
+        } catch {
+            observabilityScope.emit(
+                error: "Error resetting repository manager at '\(self.path)'",
+                underlyingError: error
+            )
+        }
     }
 
     /// Sets up the cache directories if they don't already exist.
-    public func initializeCacheIfNeeded(cachePath: AbsolutePath) throws {
+    private func initializeCacheIfNeeded(cachePath: AbsolutePath) throws {
         // Create the supplied cache directory.
         if !self.fileSystem.exists(cachePath) {
             try self.fileSystem.createDirectory(cachePath, recursive: true)
@@ -399,13 +480,35 @@ public class RepositoryManager: Cancellable {
     }
 
     /// Purges the cached repositories from the cache.
-    public func purgeCache() throws {
-        guard let cachePath = self.cachePath else { return }
-        try self.fileSystem.withLock(on: cachePath, type: .exclusive) {
-            let cachedRepositories = try self.fileSystem.getDirectoryContents(cachePath)
-            for repoPath in cachedRepositories {
-                try self.fileSystem.removeFileTree(cachePath.appending(component: repoPath))
+    public func purgeCache(observabilityScope: ObservabilityScope) {
+        guard let cachePath else {
+            return
+        }
+
+        guard self.fileSystem.exists(cachePath) else {
+            return
+        }
+
+        do {
+            try self.fileSystem.withLock(on: cachePath, type: .exclusive) {
+                let cachedRepositories = try self.fileSystem.getDirectoryContents(cachePath)
+                for repoPath in cachedRepositories {
+                    let pathToDelete = cachePath.appending(component: repoPath)
+                    do {
+                        try self.fileSystem.removeFileTree(pathToDelete)
+                    } catch {
+                        observabilityScope.emit(
+                            error: "Error removing cached repository at '\(pathToDelete)'",
+                            underlyingError: error
+                        )
+                    }
+                }
             }
+        } catch {
+            observabilityScope.emit(
+                error: "Error purging repository cache at '\(cachePath)'",
+                underlyingError: error
+            )
         }
     }
 }
@@ -455,9 +558,15 @@ extension RepositoryManager {
     public struct FetchDetails: Equatable {
         /// Indicates if the repository was fetched from the cache or from the remote.
         public let fromCache: Bool
-        /// Indicates wether the wether the repository was already present in the cache and updated or if a clean fetch was performed.
+        /// Indicates whether the repository was already present in the cache and updated or if a clean fetch was performed.
         public let updatedCache: Bool
     }
+}
+
+public enum RepositoryUpdateStrategy {
+    case never
+    case always
+    case ifNeeded(revision: Revision)
 }
 
 /// Delegate to notify clients about actions being performed by RepositoryManager.
@@ -487,8 +596,8 @@ extension RepositoryManager.RepositoryHandle: CustomStringConvertible {
 
 extension RepositorySpecifier {
     // relative path where the repository should be stored
-    internal func storagePath() -> RelativePath {
-        return RelativePath(self.fileSystemIdentifier)
+    internal func storagePath() throws -> RelativePath {
+        return try RelativePath(validating: self.fileSystemIdentifier)
     }
 
     /// A unique identifier for this specifier.
@@ -496,9 +605,17 @@ extension RepositorySpecifier {
     /// This identifier is suitable for use in a file system path, and
     /// unique for each repository.
     private var fileSystemIdentifier: String {
+        // canonicalize across similar locations (mainly for URLs)
         // Use first 8 chars of a stable hash.
-        let suffix = self.location.description .sha256Checksum.prefix(8)
+        let suffix = self.canonicalLocation.description.sha256Checksum.prefix(8)
         return "\(self.basename)-\(suffix)"
+    }
+}
+
+extension RepositorySpecifier {
+    fileprivate var canonicalLocation: String {
+        let canonicalPackageLocation: CanonicalPackageURL = .init(self.location.description)
+        return "\(canonicalPackageLocation.description)_\(canonicalPackageLocation.scheme ?? "")"
     }
 }
 
@@ -512,4 +629,46 @@ extension RepositorySpecifier {
         }
     }
 }
+
+#if canImport(SystemConfiguration)
+import SystemConfiguration
+
+private struct Reachability {
+    let reachability: SCNetworkReachability
+
+    init?() {
+        var emptyAddress = sockaddr()
+        emptyAddress.sa_len = UInt8(MemoryLayout<sockaddr>.size)
+        emptyAddress.sa_family = sa_family_t(AF_INET)
+
+        guard let reachability = withUnsafePointer(to: &emptyAddress, {
+            SCNetworkReachabilityCreateWithAddress(nil, UnsafePointer($0))
+        }) else {
+            return nil
+        }
+        self.reachability = reachability
+    }
+
+    var connectionRequired: Bool {
+        var flags = SCNetworkReachabilityFlags()
+        let hasFlags = withUnsafeMutablePointer(to: &flags) {
+            SCNetworkReachabilityGetFlags(reachability, UnsafeMutablePointer($0))
+        }
+        guard hasFlags else { return false }
+        guard flags.contains(.reachable) else {
+            return true
+        }
+        return flags.contains(.connectionRequired) || flags.contains(.transientConnection)
+    }
+}
+
+fileprivate func isOffline(_ error: Swift.Error) -> Bool {
+    return Reachability()?.connectionRequired == true
+}
+#else
+fileprivate func isOffline(_ error: Swift.Error) -> Bool {
+    // TODO: Find a better way to determine reachability on non-Darwin platforms.
+    return "\(error)".contains("Could not resolve host")
+}
+#endif
 

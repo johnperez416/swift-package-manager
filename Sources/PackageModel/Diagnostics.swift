@@ -10,8 +10,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-import TSCBasic
-
 import Foundation
 
 /// The diagnostic triggered when the package has a newer tools version than the installed tools.
@@ -42,8 +40,8 @@ public struct RequireNewerTools: Error, CustomStringConvertible {
 
     public var description: String {
         var text = "package '\(self.packageIdentity)'"
-        if let version = self.packageVersion {
-            text += " @ \(version)"
+        if let packageVersion {
+            text += " @ \(packageVersion)"
         }
         text += " is using Swift tools version \(packageToolsVersion.description) but the installed version is \(installedToolsVersion.description)"
         return text
@@ -82,8 +80,8 @@ public struct UnsupportedToolsVersion: Error, CustomStringConvertible {
 
     public var description: String {
         var text = "package '\(self.packageIdentity)'"
-        if let version = self.packageVersion {
-            text += " @ \(version)"
+        if let packageVersion {
+            text += " @ \(packageVersion)"
         }
         text += " is using Swift tools version \(packageToolsVersion.description) which is no longer supported; \(hintString)"
         return text

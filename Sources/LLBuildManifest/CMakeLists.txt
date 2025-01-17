@@ -7,9 +7,9 @@
 # See http://swift.org/CONTRIBUTORS.txt for Swift project authors
 
 add_library(LLBuildManifest STATIC
-  BuildManifest.swift
   Command.swift
-  ManifestWriter.swift  
+  LLBuildManifest.swift
+  LLBuildManifestWriter.swift
   Node.swift
   Target.swift
   Tools.swift)
@@ -20,5 +20,3 @@ target_link_libraries(LLBuildManifest PUBLIC
 # NOTE(compnerd) workaround for CMake not setting up include flags yet
 set_target_properties(LLBuildManifest PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_Swift_MODULE_DIRECTORY})
-
-set_property(GLOBAL APPEND PROPERTY SwiftPM_EXPORTS LLBuildManifest)

@@ -10,9 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-/// The build configuration such as debug or release.
-public struct BuildConfiguration: Encodable {
-    private let config: String
+/// The build configuration, such as debug or release.
+public struct BuildConfiguration: Sendable {
+    /// The configuration of the build. Valid values are `debug` and `release`.
+    let config: String
 
     private init(_ config: String) {
         self.config = config
@@ -53,14 +54,18 @@ public struct BuildConfiguration: Encodable {
 ///     ]
 /// ),
 /// ```
-public struct BuildSettingCondition: Encodable {
+public struct BuildSettingCondition: Sendable {
+    /// The applicable platforms for this build setting condition.
+    let platforms: [Platform]?
+    /// The applicable build configuration for this build setting condition.
+    let config: BuildConfiguration?
+    /// The applicable traits for this build setting condition.
+    let traits: Set<String>?
 
-    private let platforms: [Platform]?
-    private let config: BuildConfiguration?
-
-    private init(platforms: [Platform]?, config: BuildConfiguration?) {
+    private init(platforms: [Platform]?, config: BuildConfiguration?, traits: Set<String>?) {
         self.platforms = platforms
         self.config = config
+        self.traits = traits
     }
 
     @available(_PackageDescription, deprecated: 5.7)
@@ -69,7 +74,23 @@ public struct BuildSettingCondition: Encodable {
         configuration: BuildConfiguration? = nil
     ) -> BuildSettingCondition {
         precondition(!(platforms == nil && configuration == nil))
-        return BuildSettingCondition(platforms: platforms, config: configuration)
+        return BuildSettingCondition(platforms: platforms, config: configuration, traits: nil)
+    }
+
+    /// Creates a build setting condition.
+    ///
+    /// - Parameters:
+    ///   - platforms: The applicable platforms for this build setting condition.
+    ///   - configuration: The applicable build configuration for this build setting condition.
+    ///   - traits: The applicable traits for this build setting condition.
+    @available(_PackageDescription, introduced: 6.1)
+    public static func when(
+        platforms: [Platform]? = nil,
+        configuration: BuildConfiguration? = nil,
+        traits: Set<String>? = nil
+    ) -> BuildSettingCondition {
+        precondition(!(platforms == nil && configuration == nil && traits == nil))
+        return BuildSettingCondition(platforms: platforms, config: configuration, traits: traits)
     }
 
     /// Creates a build setting condition.
@@ -79,7 +100,7 @@ public struct BuildSettingCondition: Encodable {
     ///   - configuration: The applicable build configuration for this build setting condition.
     @available(_PackageDescription, introduced: 5.7)
     public static func when(platforms: [Platform], configuration: BuildConfiguration) -> BuildSettingCondition {
-        BuildSettingCondition(platforms: platforms, config: configuration)
+        BuildSettingCondition(platforms: platforms, config: configuration, traits: nil)
     }
 
     /// Creates a build setting condition.
@@ -87,7 +108,7 @@ public struct BuildSettingCondition: Encodable {
     /// - Parameter platforms: The applicable platforms for this build setting condition.
     @available(_PackageDescription, introduced: 5.7)
     public static func when(platforms: [Platform]) -> BuildSettingCondition {
-        BuildSettingCondition(platforms: platforms, config: .none)
+        BuildSettingCondition(platforms: platforms, config: .none, traits: nil)
     }
 
     /// Creates a build setting condition.
@@ -95,12 +116,12 @@ public struct BuildSettingCondition: Encodable {
     /// - Parameter configuration: The applicable build configuration for this build setting condition.
     @available(_PackageDescription, introduced: 5.7)
     public static func when(configuration: BuildConfiguration) -> BuildSettingCondition {
-        BuildSettingCondition(platforms: .none, config: configuration)
+        BuildSettingCondition(platforms: .none, config: configuration, traits: nil)
     }
 }
 
 /// The underlying build setting data.
-fileprivate struct BuildSettingData: Encodable {
+struct BuildSettingData {
 
     /// The name of the build setting.
     let name: String
@@ -112,9 +133,10 @@ fileprivate struct BuildSettingData: Encodable {
     let condition: BuildSettingCondition?
 }
 
-/// A C-language build setting.
-public struct CSetting: Encodable {
-    private let data: BuildSettingData
+/// A C language build setting.
+public struct CSetting: Sendable {
+    /// The abstract build setting data.
+    let data: BuildSettingData
 
     private init(name: String, value: [String], condition: BuildSettingCondition?) {
         self.data = BuildSettingData(name: name, value: value, condition: condition)
@@ -132,7 +154,8 @@ public struct CSetting: Encodable {
     ///
     /// - Parameters:
     ///   - path: The path of the directory that contains the headers. The path is relative to the target's directory.
-    ///   - condition: A condition that restricts the application of the build setting.
+    ///   - condition: A condition that restricts the use of the build setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func headerSearchPath(_ path: String, _ condition: BuildSettingCondition? = nil) -> CSetting {
         return CSetting(name: "headerSearchPath", value: [path], condition: condition)
     }
@@ -146,11 +169,12 @@ public struct CSetting: Encodable {
     /// - Parameters:
     ///   - name: The name of the macro.
     ///   - value: The value of the macro.
-    ///   - condition: A condition that restricts the application of the build
+    ///   - condition: A condition that restricts the use of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func define(_ name: String, to value: String? = nil, _ condition: BuildSettingCondition? = nil) -> CSetting {
         var settingValue = name
-        if let value = value {
+        if let value {
             settingValue += "=" + value
         }
         return CSetting(name: "define", value: [settingValue], condition: condition)
@@ -173,14 +197,16 @@ public struct CSetting: Encodable {
     ///   - flags: The unsafe flags to set.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func unsafeFlags(_ flags: [String], _ condition: BuildSettingCondition? = nil) -> CSetting {
         return CSetting(name: "unsafeFlags", value: flags, condition: condition)
     }
 }
 
 /// A CXX-language build setting.
-public struct CXXSetting: Encodable {
-    private let data: BuildSettingData
+public struct CXXSetting: Sendable {
+    /// The data store for the CXX build setting.
+    let data: BuildSettingData
 
     private init(name: String, value: [String], condition: BuildSettingCondition?) {
         self.data = BuildSettingData(name: name, value: value, condition: condition)
@@ -198,7 +224,9 @@ public struct CXXSetting: Encodable {
     ///
     /// - Parameters:
     ///   - path: The path of the directory that contains the headers. The path is
+    ///   relative to the target's directory.
     ///   - condition: A condition that restricts the application of the build setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func headerSearchPath(_ path: String, _ condition: BuildSettingCondition? = nil) -> CXXSetting {
         return CXXSetting(name: "headerSearchPath", value: [path], condition: condition)
     }
@@ -214,9 +242,10 @@ public struct CXXSetting: Encodable {
     ///   - value: The value of the macro.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func define(_ name: String, to value: String? = nil, _ condition: BuildSettingCondition? = nil) -> CXXSetting {
         var settingValue = name
-        if let value = value {
+        if let value {
             settingValue += "=" + value
         }
         return CXXSetting(name: "define", value: [settingValue], condition: condition)
@@ -238,14 +267,16 @@ public struct CXXSetting: Encodable {
     ///   - flags: The unsafe flags to set.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func unsafeFlags(_ flags: [String], _ condition: BuildSettingCondition? = nil) -> CXXSetting {
         return CXXSetting(name: "unsafeFlags", value: flags, condition: condition)
     }
 }
 
 /// A Swift language build setting.
-public struct SwiftSetting: Encodable {
-    private let data: BuildSettingData
+public struct SwiftSetting: Sendable {
+    /// The data store for the Swift build setting.
+    let data: BuildSettingData
 
     private init(name: String, value: [String], condition: BuildSettingCondition?) {
         self.data = BuildSettingData(name: name, value: value, condition: condition)
@@ -272,6 +303,7 @@ public struct SwiftSetting: Encodable {
     ///   - name: The name of the macro.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func define(_ name: String, _ condition: BuildSettingCondition? = nil) -> SwiftSetting {
         return SwiftSetting(name: "define", value: [name], condition: condition)
     }
@@ -293,14 +325,127 @@ public struct SwiftSetting: Encodable {
     ///   - flags: The unsafe flags to set.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func unsafeFlags(_ flags: [String], _ condition: BuildSettingCondition? = nil) -> SwiftSetting {
         return SwiftSetting(name: "unsafeFlags", value: flags, condition: condition)
+    }
+
+    /// Enable an upcoming feature with the given name.
+    ///
+    /// An upcoming feature is one that is available in Swift as of a
+    /// certain language version, but isn't available by default in prior
+    /// language modes because it has some impact on source compatibility.
+    ///
+    /// You can add and use multiple upcoming features in a given target
+    /// without affecting its dependencies. Targets will ignore any unknown
+    /// upcoming features.
+    ///
+    /// - Since: First available in PackageDescription 5.8.
+    ///
+    /// - Parameters:
+    ///   - name: The name of the upcoming feature; for example, `ConciseMagicFile`.
+    ///   - condition: A condition that restricts the application of the build
+    /// setting.
+    @available(_PackageDescription, introduced: 5.8)
+    public static func enableUpcomingFeature(
+        _ name: String,
+        _ condition: BuildSettingCondition? = nil
+    ) -> SwiftSetting {
+        return SwiftSetting(
+            name: "enableUpcomingFeature", value: [name], condition: condition)
+    }
+
+    /// Enable an experimental feature with the given name.
+    ///
+    /// An experimental feature is one that's in development, but
+    /// is not yet available in Swift as a language feature.
+    ///
+    /// You can add and use multiple experimental features in a given target
+    /// without affecting its dependencies. Targets will ignore any  unknown
+    /// experimental features.
+    ///
+    /// - Since: First available in PackageDescription 5.8.
+    ///
+    /// - Parameters:
+    ///   - name: The name of the experimental feature; for example, `VariadicGenerics`.
+    ///   - condition: A condition that restricts the application of the build
+    /// setting.
+    @available(_PackageDescription, introduced: 5.8)
+    public static func enableExperimentalFeature(
+        _ name: String,
+        _ condition: BuildSettingCondition? = nil
+    ) -> SwiftSetting {
+        return SwiftSetting(
+            name: "enableExperimentalFeature", value: [name], condition: condition)
+    }
+
+    public enum InteroperabilityMode: String {
+        case C
+        case Cxx
+    }
+
+    /// Enable Swift interoperability with a given language.
+    ///
+    /// This is useful for enabling interoperability between Swift and C++ for
+    /// a given target.
+    ///
+    /// Enabling C++ interoperability mode might alter the way some existing
+    /// C and Objective-C APIs are imported.
+    ///
+    /// - Since: First available in PackageDescription 5.9.
+    ///
+    /// - Parameters:
+    ///   - mode: The language mode, either C or Cxx.
+    ///   - condition: A condition that restricts the application of the build
+    /// setting.
+    @available(_PackageDescription, introduced: 5.9)
+    public static func interoperabilityMode(
+      _ mode: InteroperabilityMode,
+      _ condition: BuildSettingCondition? = nil
+    ) -> SwiftSetting {
+        return SwiftSetting(
+          name: "interoperabilityMode", value: [mode.rawValue], condition: condition)
+    }
+
+    /// Defines a `-swift-version` to pass  to the
+    /// corresponding build tool.
+    ///
+    /// - Since: First available in PackageDescription 6.0.
+    ///
+    /// - Parameters:
+    ///   - version: The Swift language version to use.
+    ///   - condition: A condition that restricts the application of the build setting.
+    @available(_PackageDescription, introduced: 6.0, deprecated: 6.0, renamed: "swiftLanguageMode(_:_:)")
+    public static func swiftLanguageVersion(
+      _ version: SwiftVersion,
+      _ condition: BuildSettingCondition? = nil
+    ) -> SwiftSetting {
+        return SwiftSetting(
+            name: "swiftLanguageMode", value: [.init(describing: version)], condition: condition)
+    }
+
+    /// Defines a `-language-mode` to pass  to the
+    /// corresponding build tool.
+    ///
+    /// - Since: First available in PackageDescription 6.0.
+    ///
+    /// - Parameters:
+    ///   - mode: The Swift language mode to use.
+    ///   - condition: A condition that restricts the application of the build setting.
+    @available(_PackageDescription, introduced: 6.0)
+    public static func swiftLanguageMode(
+      _ mode: SwiftLanguageMode,
+      _ condition: BuildSettingCondition? = nil
+    ) -> SwiftSetting {
+        return SwiftSetting(
+            name: "swiftLanguageMode", value: [.init(describing: mode)], condition: condition)
     }
 }
 
 /// A linker build setting.
-public struct LinkerSetting: Encodable {
-    private let data: BuildSettingData
+public struct LinkerSetting: Sendable {
+    /// The data store for the Linker setting.
+    let data: BuildSettingData
 
     private init(name: String, value: [String], condition: BuildSettingCondition?) {
         self.data = BuildSettingData(name: name, value: value, condition: condition)
@@ -317,6 +462,7 @@ public struct LinkerSetting: Encodable {
     ///   - library: The library name.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func linkedLibrary(_ library: String, _ condition: BuildSettingCondition? = nil) -> LinkerSetting {
         return LinkerSetting(name: "linkedLibrary", value: [library], condition: condition)
     }
@@ -332,6 +478,7 @@ public struct LinkerSetting: Encodable {
     ///   - framework: The framework name.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func linkedFramework(_ framework: String, _ condition: BuildSettingCondition? = nil) -> LinkerSetting {
         return LinkerSetting(name: "linkedFramework", value: [framework], condition: condition)
     }
@@ -353,6 +500,7 @@ public struct LinkerSetting: Encodable {
     ///   - flags: The unsafe flags to set.
     ///   - condition: A condition that restricts the application of the build
     /// setting.
+    @available(_PackageDescription, introduced: 5.0)
     public static func unsafeFlags(_ flags: [String], _ condition: BuildSettingCondition? = nil) -> LinkerSetting {
         return LinkerSetting(name: "unsafeFlags", value: flags, condition: condition)
     }

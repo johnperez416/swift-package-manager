@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2018-2022 Apple Inc. and the Swift project authors
+// Copyright (c) 2018-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -17,10 +17,11 @@ import PackageGraph
 import PackageLoading
 import PackageModel
 import PackageRegistry
-import TSCBasic
 
-import class TSCUtility.SimplePersistence
+import struct TSCBasic.ByteString
+
 import protocol TSCUtility.SimplePersistanceProtocol
+import class TSCUtility.SimplePersistence
 
 // MARK: - Location
 
@@ -30,48 +31,40 @@ extension Workspace {
         /// Path to scratch space (working) directory for this workspace (aka .build).
         public var scratchDirectory: AbsolutePath
 
-        // deprecated 3/22, remove once client move over
-        @available(*, deprecated, message: "use scratchDirectory instead")
-        public var workingDirectory: AbsolutePath {
-            get {
-                self.scratchDirectory
-            }
-            set {
-                self.scratchDirectory = newValue
-            }
-        }
-
         /// Path to store the editable versions of dependencies.
         public var editsDirectory: AbsolutePath
 
         /// Path to the Package.resolved file.
         public var resolvedVersionsFile: AbsolutePath
 
-        /// Path to the local configuration directory
+        /// Path to the local configuration directory.
         public var localConfigurationDirectory: AbsolutePath
 
-        /// Path to the shared configuration directory
+        /// Path to the shared configuration directory.
         public var sharedConfigurationDirectory: AbsolutePath?
 
-        /// Path to the shared security directory
+        /// Path to the shared security directory.
         public var sharedSecurityDirectory: AbsolutePath?
 
-        /// Path to the shared cache directory
+        /// Path to the shared cache directory.
         public var sharedCacheDirectory: AbsolutePath?
 
-        /// Whether or not to emit a warning about the existence of deprecated configuration files
+        /// Path to the shared Swift SDKs directory.
+        public var sharedSwiftSDKsDirectory: AbsolutePath?
+
+        /// Whether or not to emit a warning about the existence of deprecated configuration files.
         public var emitDeprecatedConfigurationWarning: Bool
 
         // working directories
 
         /// Path to the repositories clones.
         public var repositoriesDirectory: AbsolutePath {
-            self.scratchDirectory.appending(component: "repositories")
+            self.scratchDirectory.appending("repositories")
         }
 
         /// Path to the repository checkouts.
         public var repositoriesCheckoutsDirectory: AbsolutePath {
-            self.scratchDirectory.appending(component: "checkouts")
+            self.scratchDirectory.appending("checkouts")
         }
 
         /// Path to the registry downloads.
@@ -81,23 +74,30 @@ extension Workspace {
 
         /// Path to the downloaded binary artifacts.
         public var artifactsDirectory: AbsolutePath {
-            self.scratchDirectory.appending(component: "artifacts")
+            self.scratchDirectory.appending("artifacts")
+        }
+
+        /// Path to the downloaded prebuilts directory
+        public var prebuiltsDirectory: AbsolutePath {
+            self.scratchDirectory.appending("prebuilts")
         }
 
         // Path to temporary files related to running plugins in the workspace
         public var pluginWorkingDirectory: AbsolutePath {
-            self.scratchDirectory.appending(component: "plugins")
+            self.scratchDirectory.appending("plugins")
         }
 
         // config locations
 
         /// Path to the local mirrors configuration.
         public var localMirrorsConfigurationFile: AbsolutePath {
-            // backwards compatibility
-            if let customPath = ProcessEnv.vars["SWIFTPM_MIRROR_CONFIG"] {
-                return AbsolutePath(customPath)
+            get throws {
+                // backwards compatibility
+                if let customPath = Environment.current["SWIFTPM_MIRROR_CONFIG"] {
+                    return try AbsolutePath(validating: customPath)
+                }
+                return DefaultLocations.mirrorsConfigurationFile(at: self.localConfigurationDirectory)
             }
-            return DefaultLocations.mirrorsConfigurationFile(at: self.localConfigurationDirectory)
         }
 
         /// Path to the shared mirrors configuration.
@@ -119,7 +119,17 @@ extension Workspace {
 
         /// Path to the shared fingerprints directory.
         public var sharedFingerprintsDirectory: AbsolutePath? {
-            self.sharedSecurityDirectory.map { $0.appending(component: "fingerprints") }
+            self.sharedSecurityDirectory.map { $0.appending("fingerprints") }
+        }
+
+        /// Path to the shared directory where package signing records are kept.
+        public var sharedSigningEntitiesDirectory: AbsolutePath? {
+            self.sharedSecurityDirectory.map { $0.appending("signing-entities") }
+        }
+
+        /// Path to the shared trusted root certificates directory.
+        public var sharedTrustedRootCertificatesDirectory: AbsolutePath? {
+            self.sharedSecurityDirectory.map { $0.appending("trusted-root-certs") }
         }
 
         // cache locations
@@ -131,7 +141,7 @@ extension Workspace {
 
         /// Path to the shared repositories cache.
         public var sharedRepositoriesCacheDirectory: AbsolutePath? {
-            self.sharedCacheDirectory.map { $0.appending(component: "repositories") }
+            self.sharedCacheDirectory.map { $0.appending("repositories") }
         }
 
         /// Path to the shared registry download cache.
@@ -139,25 +149,14 @@ extension Workspace {
             self.sharedCacheDirectory.map { $0.appending(components: "registry", "downloads") }
         }
 
-        // deprecated 3/22, remove once client move over
-        @available(*, deprecated, message: "use (scratchDirectory:) variant instead")
-        public init(
-            workingDirectory: AbsolutePath,
-            editsDirectory: AbsolutePath,
-            resolvedVersionsFile: AbsolutePath,
-            localConfigurationDirectory: AbsolutePath,
-            sharedConfigurationDirectory: AbsolutePath?,
-            sharedSecurityDirectory: AbsolutePath?,
-            sharedCacheDirectory: AbsolutePath?
-        ) {
-            self.scratchDirectory = workingDirectory
-            self.editsDirectory = editsDirectory
-            self.resolvedVersionsFile = resolvedVersionsFile
-            self.localConfigurationDirectory = localConfigurationDirectory
-            self.sharedConfigurationDirectory = sharedConfigurationDirectory
-            self.sharedSecurityDirectory = sharedSecurityDirectory
-            self.sharedCacheDirectory = sharedCacheDirectory
-            self.emitDeprecatedConfigurationWarning = true
+        /// Path to the shared repositories cache.
+        public var sharedBinaryArtifactsCacheDirectory: AbsolutePath? {
+            self.sharedCacheDirectory.map { $0.appending("artifacts") }
+        }
+
+        /// Path to the shared prebuilts cache
+        public var sharedPrebuiltsCacheDirectory: AbsolutePath? {
+            self.sharedCacheDirectory.map { $0.appending("prebuilts")}
         }
 
         /// Create a new workspace location.
@@ -193,8 +192,8 @@ extension Workspace {
         ///
         /// - Parameters:
         ///   - rootPath: Path to the root of the package, from which other locations can be derived.
-        public init(forRootPackage rootPath: AbsolutePath, fileSystem: FileSystem) {
-            self.init(
+        public init(forRootPackage rootPath: AbsolutePath, fileSystem: FileSystem) throws {
+            try self.init(
                 scratchDirectory: DefaultLocations.scratchDirectory(forRootPackage: rootPath),
                 editsDirectory: DefaultLocations.editsDirectory(forRootPackage: rootPath),
                 resolvedVersionsFile: DefaultLocations.resolvedVersionsFile(forRootPackage: rootPath),
@@ -212,22 +211,18 @@ extension Workspace {
 extension Workspace {
     /// Workspace default locations utilities
     public struct DefaultLocations {
-        // deprecated 3/22, remove once client move over
-        @available(*, deprecated, message: "use scratchDirectory instead")
-        public static func workingDirectory(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
-            Self.scratchDirectory(forRootPackage: rootPath)
-        }
+        public static var resolvedFileName = "Package.resolved"
 
         public static func scratchDirectory(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
-            rootPath.appending(component: ".build")
+            rootPath.appending(".build")
         }
 
         public static func editsDirectory(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
-            rootPath.appending(component: "Packages")
+            rootPath.appending("Packages")
         }
 
         public static func resolvedVersionsFile(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
-            rootPath.appending(component: "Package.resolved")
+            rootPath.appending(self.resolvedFileName)
         }
 
         public static func configurationDirectory(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
@@ -235,35 +230,49 @@ extension Workspace {
         }
 
         public static func mirrorsConfigurationFile(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
-            mirrorsConfigurationFile(at: self.configurationDirectory(forRootPackage: rootPath))
+            self.mirrorsConfigurationFile(at: self.configurationDirectory(forRootPackage: rootPath))
         }
 
         public static func mirrorsConfigurationFile(at path: AbsolutePath) -> AbsolutePath {
-            path.appending(component: "mirrors.json")
+            path.appending("mirrors.json")
         }
 
         public static func registriesConfigurationFile(forRootPackage rootPath: AbsolutePath) -> AbsolutePath {
-            registriesConfigurationFile(at: self.configurationDirectory(forRootPackage: rootPath))
+            self.registriesConfigurationFile(at: self.configurationDirectory(forRootPackage: rootPath))
         }
 
         public static func registriesConfigurationFile(at path: AbsolutePath) -> AbsolutePath {
-            path.appending(component: "registries.json")
+            path.appending("registries.json")
         }
 
         public static func manifestsDirectory(at path: AbsolutePath) -> AbsolutePath {
-            path.appending(component: "manifests")
+            path.appending("manifests")
         }
     }
 
-    public static func migrateMirrorsConfiguration(from legacyPath: AbsolutePath, to newPath: AbsolutePath, observabilityScope: ObservabilityScope) throws -> AbsolutePath {
+    public static func migrateMirrorsConfiguration(
+        from legacyPath: AbsolutePath,
+        to newPath: AbsolutePath,
+        observabilityScope: ObservabilityScope
+    ) throws -> AbsolutePath {
         if localFileSystem.isFile(legacyPath) {
             if localFileSystem.isSymlink(legacyPath) {
-                let resolvedLegacyPath = resolveSymlinks(legacyPath)
-                return try migrateMirrorsConfiguration(from: resolvedLegacyPath, to: newPath, observabilityScope: observabilityScope)
+                let resolvedLegacyPath = try resolveSymlinks(legacyPath)
+                return try self.migrateMirrorsConfiguration(
+                    from: resolvedLegacyPath,
+                    to: newPath,
+                    observabilityScope: observabilityScope
+                )
             } else if localFileSystem.isFile(newPath.parentDirectory) {
-                observabilityScope.emit(warning: "Unable to migrate legacy mirrors configuration, because \(newPath.parentDirectory) already exists.")
+                observabilityScope
+                    .emit(
+                        warning: "Unable to migrate legacy mirrors configuration, because \(newPath.parentDirectory) already exists."
+                    )
             } else if let content = try? localFileSystem.readFileContents(legacyPath), content.count > 0 {
-                observabilityScope.emit(warning: "Usage of \(legacyPath) has been deprecated. Please delete it and use the new \(newPath) instead.")
+                observabilityScope
+                    .emit(
+                        warning: "Usage of \(legacyPath) has been deprecated. Please delete it and use the new \(newPath) instead."
+                    )
                 if !localFileSystem.exists(newPath, followSymlink: false) {
                     try localFileSystem.createDirectory(newPath.parentDirectory, recursive: true)
                     try localFileSystem.copy(from: legacyPath, to: newPath)
@@ -294,35 +303,28 @@ extension Workspace.Configuration {
             self.keychain = keychain
         }
 
-        public func makeAuthorizationProvider(fileSystem: FileSystem, observabilityScope: ObservabilityScope) throws -> AuthorizationProvider? {
+        public func makeAuthorizationProvider(
+            fileSystem: FileSystem,
+            observabilityScope: ObservabilityScope
+        ) throws -> AuthorizationProvider? {
             var providers = [AuthorizationProvider]()
 
             switch self.netrc {
             case .custom(let path):
                 guard fileSystem.exists(path) else {
-                    throw StringError("Did not find .netrc file at \(path).")
+                    throw StringError("Did not find netrc file at \(path).")
                 }
-                providers.append(try NetrcAuthorizationProvider(path: path, fileSystem: fileSystem))
-            case .workspaceAndUser(let rootPath):
-                // package/project "local" .netrc file, takes priority over user-level file
-                let localPath = rootPath.appending(component: ".netrc")
-                // user didn't tell us to explicitly use these .netrc files so be more lenient with errors
-                if let localProvider = self.loadOptionalNetrc(fileSystem: fileSystem, path: localPath, observabilityScope: observabilityScope) {
-                    providers.append(localProvider)
-                }
-
-                // user .netrc file (most typical)
-                let userHomePath = fileSystem.homeDirectory.appending(component: ".netrc")
-                // user didn't tell us to explicitly use these .netrc files so be more lenient with errors
-                if let userHomeProvider = self.loadOptionalNetrc(fileSystem: fileSystem, path: userHomePath, observabilityScope: observabilityScope) {
-                    providers.append(userHomeProvider)
-                }
+                try providers.append(NetrcAuthorizationProvider(path: path, fileSystem: fileSystem))
             case .user:
                 // user .netrc file (most typical)
-                let userHomePath = fileSystem.homeDirectory.appending(component: ".netrc")
+                let userHomePath = try fileSystem.homeDirectory.appending(".netrc")
 
                 // user didn't tell us to explicitly use these .netrc files so be more lenient with errors
-                if let userHomeProvider = self.loadOptionalNetrc(fileSystem: fileSystem, path: userHomePath, observabilityScope: observabilityScope) {
+                if let userHomeProvider = self.loadOptionalNetrc(
+                    fileSystem: fileSystem,
+                    path: userHomePath,
+                    observabilityScope: observabilityScope
+                ) {
                     providers.append(userHomeProvider)
                 }
             case .disabled:
@@ -342,7 +344,49 @@ extension Workspace.Configuration {
                 break
             }
 
-            return providers.isEmpty ? .none : CompositeAuthorizationProvider(providers, observabilityScope: observabilityScope)
+            return providers.isEmpty ? .none : CompositeAuthorizationProvider(
+                providers,
+                observabilityScope: observabilityScope
+            )
+        }
+
+        public func makeRegistryAuthorizationProvider(
+            fileSystem: FileSystem,
+            observabilityScope: ObservabilityScope
+        ) throws -> AuthorizationProvider? {
+            var providers = [AuthorizationProvider]()
+
+            // OS-specific AuthorizationProvider has higher precedence
+            switch self.keychain {
+            case .enabled:
+                #if canImport(Security)
+                providers.append(KeychainAuthorizationProvider(observabilityScope: observabilityScope))
+                #else
+                throw InternalError("Keychain not supported on this platform")
+                #endif
+            case .disabled:
+                // noop
+                break
+            }
+
+            switch self.netrc {
+            case .custom(let path):
+                guard fileSystem.exists(path) else {
+                    throw StringError("did not find netrc file at \(path)")
+                }
+                try providers.append(NetrcAuthorizationProvider(path: path, fileSystem: fileSystem))
+            case .user:
+                let userHomePath = try fileSystem.homeDirectory.appending(".netrc")
+                // Add user .netrc file unless we don't have access
+                if let userHomeProvider = try? NetrcAuthorizationProvider(path: userHomePath, fileSystem: fileSystem) {
+                    providers.append(userHomeProvider)
+                }
+            case .disabled:
+                throw InternalError("netrc file should not have been disabled")
+            }
+
+            // Use at-most one AuthorizationProvider (i.e., no CompositeAuthorizationProvider)
+            return providers.first
         }
 
         private func loadOptionalNetrc(
@@ -357,7 +401,10 @@ extension Workspace.Configuration {
             do {
                 return try NetrcAuthorizationProvider(path: path, fileSystem: fileSystem)
             } catch {
-                observabilityScope.emit(warning: "Failed to load .netrc file at \(path). Error: \(error)")
+                observabilityScope.emit(
+                    warning: "Failed to load netrc file at \(path)",
+                    underlyingError: error
+                )
                 return .none
             }
         }
@@ -365,7 +412,6 @@ extension Workspace.Configuration {
         public enum Netrc {
             case disabled
             case custom(AbsolutePath)
-            case workspaceAndUser(rootPath: AbsolutePath)
             case user
         }
 
@@ -414,12 +460,6 @@ extension Workspace.Configuration {
             )
         }
 
-        // deprecated 12/21
-        @available(*, deprecated, message: "using init(fileSystem:localMirrorsFile:sharedMirrorsFile) instead")
-        public init(localMirrorFile: AbsolutePath, sharedMirrorFile: AbsolutePath?, fileSystem: FileSystem) throws {
-            try self.init(fileSystem: fileSystem, localMirrorsFile: localMirrorFile, sharedMirrorsFile: sharedMirrorFile)
-        }
-
         /// Initialize the workspace mirrors configuration
         ///
         /// - Parameters:
@@ -432,10 +472,11 @@ extension Workspace.Configuration {
             sharedMirrorsFile: AbsolutePath?
         ) throws {
             self.localMirrors = .init(path: localMirrorsFile, fileSystem: fileSystem, deleteWhenEmpty: true)
-            self.sharedMirrors = sharedMirrorsFile.map { .init(path: $0, fileSystem: fileSystem, deleteWhenEmpty: false) }
+            self.sharedMirrors = sharedMirrorsFile
+                .map { .init(path: $0, fileSystem: fileSystem, deleteWhenEmpty: false) }
             self.fileSystem = fileSystem
             // computes the initial mirrors
-            self._mirrors = DependencyMirrors()
+            self._mirrors = try DependencyMirrors()
             try self.computeMirrors()
         }
 
@@ -448,7 +489,7 @@ extension Workspace.Configuration {
 
         @discardableResult
         public func applyShared(handler: (inout DependencyMirrors) throws -> Void) throws -> DependencyMirrors {
-            guard let sharedMirrors = self.sharedMirrors else {
+            guard let sharedMirrors else {
                 throw InternalError("shared mirrors not configured")
             }
             try sharedMirrors.apply(handler: handler)
@@ -465,13 +506,13 @@ extension Workspace.Configuration {
                 // prefer local mirrors to shared ones
                 let local = try self.localMirrors.get()
                 if !local.isEmpty {
-                    self._mirrors.append(contentsOf: local)
+                    try self._mirrors.append(contentsOf: local)
                     return
                 }
 
                 // use shared if local was not found or empty
                 if let shared = try self.sharedMirrors?.get(), !shared.isEmpty {
-                    self._mirrors.append(contentsOf: shared)
+                    try self._mirrors.append(contentsOf: shared)
                 }
             }
         }
@@ -493,13 +534,12 @@ extension Workspace.Configuration {
         /// The mirrors in this configuration
         public func get() throws -> DependencyMirrors {
             guard self.fileSystem.exists(self.path) else {
-                return DependencyMirrors()
+                return try DependencyMirrors()
             }
             return try self.fileSystem.withLock(on: self.path.parentDirectory, type: .shared) {
-                return DependencyMirrors(try Self.load(self.path, fileSystem: self.fileSystem))
+                try DependencyMirrors(Self.load(self.path, fileSystem: self.fileSystem))
             }
         }
-
 
         /// Apply a mutating handler on the mirrors in this configuration
         @discardableResult
@@ -508,11 +548,16 @@ extension Workspace.Configuration {
                 try self.fileSystem.createDirectory(self.path.parentDirectory, recursive: true)
             }
             return try self.fileSystem.withLock(on: self.path.parentDirectory, type: .exclusive) {
-                let mirrors = DependencyMirrors(try Self.load(self.path, fileSystem: self.fileSystem))
-                var updatedMirrors = DependencyMirrors(mirrors.mapping)
+                let mirrors = try DependencyMirrors(Self.load(self.path, fileSystem: self.fileSystem))
+                var updatedMirrors = try DependencyMirrors(mirrors.mapping)
                 try handler(&updatedMirrors)
                 if updatedMirrors != mirrors {
-                    try Self.save(updatedMirrors.mapping, to: self.path, fileSystem: self.fileSystem, deleteWhenEmpty: self.deleteWhenEmpty)
+                    try Self.save(
+                        updatedMirrors.mapping,
+                        to: self.path,
+                        fileSystem: self.fileSystem,
+                        deleteWhenEmpty: self.deleteWhenEmpty
+                    )
                 }
                 return updatedMirrors
             }
@@ -525,16 +570,24 @@ extension Workspace.Configuration {
             let data: Data = try fileSystem.readFileContents(path)
             let decoder = JSONDecoder.makeWithDefaults()
             let mirrors = try decoder.decode(MirrorsStorage.self, from: data)
-            let mirrorsMap = Dictionary(mirrors.object.map({ ($0.original, $0.mirror) }), uniquingKeysWith: { first, _ in first })
+            let mirrorsMap = Dictionary(
+                mirrors.object.map { ($0.original, $0.mirror) },
+                uniquingKeysWith: { first, _ in first }
+            )
             return mirrorsMap
         }
 
-        private static func save(_ mirrors: [String: String], to path: AbsolutePath, fileSystem: FileSystem, deleteWhenEmpty: Bool) throws {
+        private static func save(
+            _ mirrors: [String: String],
+            to path: AbsolutePath,
+            fileSystem: FileSystem,
+            deleteWhenEmpty: Bool
+        ) throws {
             if mirrors.isEmpty {
-                if deleteWhenEmpty && fileSystem.exists(path)  {
+                if deleteWhenEmpty && fileSystem.exists(path) {
                     // deleteWhenEmpty is a backward compatibility mode
                     return try fileSystem.removeFileTree(path)
-                } else if !fileSystem.exists(path)  {
+                } else if !fileSystem.exists(path) {
                     // nothing to do
                     return
                 }
@@ -566,7 +619,7 @@ extension Workspace.Configuration {
 
 extension Workspace.Configuration {
     public class Registries {
-        private let localRegistries: RegistriesStorage
+        private let localRegistries: RegistriesStorage?
         private let sharedRegistries: RegistriesStorage?
         private let fileSystem: FileSystem
 
@@ -576,7 +629,7 @@ extension Workspace.Configuration {
         /// The registry configuration
         public var configuration: RegistryConfiguration {
             self.lock.withLock {
-                return self._configuration
+                self._configuration
             }
         }
 
@@ -585,28 +638,41 @@ extension Workspace.Configuration {
         /// - Parameters:
         ///   - fileSystem: The file system to use.
         ///   - localRegistriesFile: Path to the workspace registries configuration file
-        ///   - sharedRegistriesFile: Path to the shared registries configuration file, defaults to the standard location.
+        ///   - sharedRegistriesFile: Path to the shared registries configuration file,
+        ///                           defaults to the standard location.
         public init(
             fileSystem: FileSystem,
-            localRegistriesFile: AbsolutePath,
+            localRegistriesFile: AbsolutePath?,
             sharedRegistriesFile: AbsolutePath?
         ) throws {
+            // At least one of local or shared is required
+            if localRegistriesFile == nil, sharedRegistriesFile == nil {
+                throw StringError("No registries configuration provided")
+            }
+
             self.fileSystem = fileSystem
-            self.localRegistries = .init(path: localRegistriesFile, fileSystem: fileSystem)
+            self.localRegistries = localRegistriesFile.map { .init(path: $0, fileSystem: fileSystem) }
             self.sharedRegistries = sharedRegistriesFile.map { .init(path: $0, fileSystem: fileSystem) }
             try self.computeRegistries()
         }
 
         @discardableResult
-        public func updateLocal(with handler: (inout RegistryConfiguration) throws -> Void) throws -> RegistryConfiguration {
-            try self.localRegistries.update(with: handler)
+        public func updateLocal(with handler: (inout RegistryConfiguration) throws -> Void) throws
+            -> RegistryConfiguration
+        {
+            guard let localRegistries else {
+                throw InternalError("local registries not configured")
+            }
+            try localRegistries.update(with: handler)
             try self.computeRegistries()
             return self.configuration
         }
 
         @discardableResult
-        public func updateShared(with handler: (inout RegistryConfiguration) throws -> Void) throws -> RegistryConfiguration {
-            guard let sharedRegistries = self.sharedRegistries else {
+        public func updateShared(with handler: (inout RegistryConfiguration) throws -> Void) throws
+            -> RegistryConfiguration
+        {
+            guard let sharedRegistries else {
                 throw InternalError("shared registries not configured")
             }
             try sharedRegistries.update(with: handler)
@@ -624,8 +690,9 @@ extension Workspace.Configuration {
                     configuration.merge(sharedConfiguration)
                 }
 
-                let localConfiguration = try localRegistries.load()
-                configuration.merge(localConfiguration)
+                if let localConfiguration = try localRegistries?.load() {
+                    configuration.merge(localConfiguration)
+                }
 
                 self._configuration = configuration
             }
@@ -644,23 +711,28 @@ extension Workspace.Configuration {
         }
 
         public func load() throws -> RegistryConfiguration {
-            guard fileSystem.exists(path) else {
+            guard self.fileSystem.exists(self.path) else {
                 return RegistryConfiguration()
             }
 
-            let data: Data = try fileSystem.readFileContents(path)
-            let decoder = JSONDecoder.makeWithDefaults()
-            return try decoder.decode(RegistryConfiguration.self, from: data)
+            do {
+                let decoder = JSONDecoder.makeWithDefaults()
+                return try decoder.decode(path: self.path, fileSystem: self.fileSystem, as: RegistryConfiguration.self)
+            } catch {
+                throw StringError(
+                    "Failed loading registries configuration from '\(self.path)': \(error.interpolationDescription)"
+                )
+            }
         }
 
         public func save(_ configuration: RegistryConfiguration) throws {
             let encoder = JSONEncoder.makeWithDefaults()
             let data = try encoder.encode(configuration)
 
-            if !fileSystem.exists(path.parentDirectory) {
-                try fileSystem.createDirectory(path.parentDirectory, recursive: true)
+            if !self.fileSystem.exists(self.path.parentDirectory) {
+                try self.fileSystem.createDirectory(self.path.parentDirectory, recursive: true)
             }
-            try fileSystem.writeFileContents(path, bytes: ByteString(data), atomically: true)
+            try self.fileSystem.writeFileContents(self.path, data: data)
         }
 
         @discardableResult
@@ -669,7 +741,7 @@ extension Workspace.Configuration {
             var updatedConfiguration = configuration
             try handler(&updatedConfiguration)
             if updatedConfiguration != configuration {
-                try save(updatedConfiguration)
+                try self.save(updatedConfiguration)
             }
 
             return updatedConfiguration
@@ -693,26 +765,61 @@ public struct WorkspaceConfiguration {
     /// Enables the shared dependencies cache. Enabled by default.
     public var sharedDependenciesCacheEnabled: Bool
 
-    ///  Fingerprint checking mode. Defaults to warn.
-    public var fingerprintCheckingMode: FingerprintCheckingMode
+    ///  Fingerprint checking mode. Defaults to strict.
+    public var fingerprintCheckingMode: CheckingMode
+
+    ///  Signing entity checking mode. Defaults to warn.
+    public var signingEntityCheckingMode: CheckingMode
+
+    /// Whether to skip validating signature of signed packages downloaded from registry
+    public var skipSignatureValidation: Bool
 
     ///  Attempt to transform source control based dependencies to registry ones
     public var sourceControlToRegistryDependencyTransformation: SourceControlToRegistryDependencyTransformation
 
+    /// URL of the implicitly configured, default registry
+    public var defaultRegistry: Registry?
+
+    /// Whether to create multiple test products or one per package
+    public var shouldCreateMultipleTestProducts: Bool
+
+    /// Whether to create a product for use in the Swift REPL
+    public var createREPLProduct: Bool
+
+    /// Whether or not there should be import restrictions applied when loading manifests
+    public var manifestImportRestrictions: (startingToolsVersion: ToolsVersion, allowedImports: [String])?
+
+    /// Whether or not to use prebuilt swift-syntax for macros
+    public var usePrebuilts: Bool
+
     public init(
         skipDependenciesUpdates: Bool,
         prefetchBasedOnResolvedFile: Bool,
+        shouldCreateMultipleTestProducts: Bool,
+        createREPLProduct: Bool,
         additionalFileRules: [FileRuleDescription],
         sharedDependenciesCacheEnabled: Bool,
-        fingerprintCheckingMode: FingerprintCheckingMode,
-        sourceControlToRegistryDependencyTransformation: SourceControlToRegistryDependencyTransformation
+        fingerprintCheckingMode: CheckingMode,
+        signingEntityCheckingMode: CheckingMode,
+        skipSignatureValidation: Bool,
+        sourceControlToRegistryDependencyTransformation: SourceControlToRegistryDependencyTransformation,
+        defaultRegistry: Registry?,
+        manifestImportRestrictions: (startingToolsVersion: ToolsVersion, allowedImports: [String])?,
+        usePrebuilts: Bool
     ) {
         self.skipDependenciesUpdates = skipDependenciesUpdates
         self.prefetchBasedOnResolvedFile = prefetchBasedOnResolvedFile
+        self.shouldCreateMultipleTestProducts = shouldCreateMultipleTestProducts
+        self.createREPLProduct = createREPLProduct
         self.additionalFileRules = additionalFileRules
         self.sharedDependenciesCacheEnabled = sharedDependenciesCacheEnabled
         self.fingerprintCheckingMode = fingerprintCheckingMode
+        self.signingEntityCheckingMode = signingEntityCheckingMode
+        self.skipSignatureValidation = skipSignatureValidation
         self.sourceControlToRegistryDependencyTransformation = sourceControlToRegistryDependencyTransformation
+        self.defaultRegistry = defaultRegistry
+        self.manifestImportRestrictions = manifestImportRestrictions
+        self.usePrebuilts = usePrebuilts
     }
 
     /// Default instance of WorkspaceConfiguration
@@ -720,10 +827,17 @@ public struct WorkspaceConfiguration {
         .init(
             skipDependenciesUpdates: false,
             prefetchBasedOnResolvedFile: true,
+            shouldCreateMultipleTestProducts: false,
+            createREPLProduct: false,
             additionalFileRules: [],
             sharedDependenciesCacheEnabled: true,
             fingerprintCheckingMode: .strict,
-            sourceControlToRegistryDependencyTransformation: .disabled
+            signingEntityCheckingMode: .warn,
+            skipSignatureValidation: false,
+            sourceControlToRegistryDependencyTransformation: .disabled,
+            defaultRegistry: .none,
+            manifestImportRestrictions: .none,
+            usePrebuilts: false
         )
     }
 
@@ -732,98 +846,17 @@ public struct WorkspaceConfiguration {
         case identity
         case swizzle
     }
+
+    public enum CheckingMode: String {
+        case strict
+        case warn
+    }
 }
 
 // MARK: - Deprecated 8/20201
 
 extension Workspace {
     /// Manages a package workspace's configuration.
-    // FIXME change into enum after deprecation grace period
-    public final class Configuration {
-        /// The path to the mirrors file.
-        private let configFile: AbsolutePath?
-
-        /// The filesystem to manage the mirrors file on.
-        private var fileSystem: FileSystem?
-
-        /// Persistence support.
-        private let persistence: SimplePersistence?
-
-        /// The schema version of the config file.
-        ///
-        /// * 1: Initial version.
-        static let schemaVersion: Int = 1
-
-        /// The mirrors.
-        public private(set) var mirrors: DependencyMirrors = DependencyMirrors()
-
-        @available(*, deprecated)
-        public convenience init(path: AbsolutePath, fs: FileSystem = localFileSystem) throws {
-            try self.init(path: path, fileSystem: fs)
-        }
-
-        /// Creates a new, persisted package configuration with a configuration file.
-        /// - Parameters:
-        ///   - path: A path to the configuration file.
-        ///   - fileSystem: The filesystem on which the configuration file is located.
-        /// - Throws: `StringError` if the configuration file is corrupted or malformed.
-        @available(*, deprecated, message: "use Configuration.Mirrors instead")
-        public init(path: AbsolutePath, fileSystem: FileSystem) throws {
-            self.configFile = path
-            self.fileSystem = fileSystem
-            let persistence = SimplePersistence(
-                fileSystem: fileSystem,
-                schemaVersion: Self.schemaVersion,
-                statePath: path,
-                prettyPrint: true
-            )
-
-            do {
-                self.persistence = persistence
-                _ = try persistence.restoreState(self)
-            } catch SimplePersistence.Error.restoreFailure(_, let error) {
-                throw StringError("Configuration file is corrupted or malformed; fix or delete the file to continue: \(error)")
-            }
-        }
-
-        /// Load the configuration from disk.
-        @available(*, deprecated, message: "use Configuration.Mirrors instead")
-        public func restoreState() throws {
-            _ = try self.persistence?.restoreState(self)
-        }
-
-        /// Persists the current configuration to disk.
-        ///
-        /// If the configuration is empty, any persisted configuration file is removed.
-        ///
-        /// - Throws: If the configuration couldn't be persisted.
-        @available(*, deprecated, message: "use Configuration.Mirrors instead")
-        public func saveState() throws {
-            guard let persistence = self.persistence else { return }
-
-            // Remove the configuration file if there aren't any mirrors.
-            if mirrors.isEmpty,
-               let fileSystem = self.fileSystem,
-               let configFile = self.configFile
-            {
-                return try fileSystem.removeFileTree(configFile)
-            }
-
-            try persistence.saveState(self)
-        }
-    }
-}
-
-@available(*, deprecated, message: "use Configuration.Mirrors instead")
-extension Workspace.Configuration: JSONSerializable {
-    public func toJSON() -> JSON {
-        return mirrors.toJSON()
-    }
-}
-
-@available(*, deprecated, message: "use Configuration.Mirrors instead")
-extension Workspace.Configuration: SimplePersistanceProtocol {
-    public func restore(from json: JSON) throws {
-        self.mirrors = try DependencyMirrors(json: json)
-    }
+    // FIXME: change into enum after deprecation grace period
+    public final class Configuration {}
 }

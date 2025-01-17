@@ -1,6 +1,6 @@
 # This source file is part of the Swift open source project
 #
-# Copyright (c) 2014 - 2019 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2023 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
 # See http://swift.org/LICENSE.txt for license information
@@ -9,13 +9,16 @@
 add_library(PackageLoading
   ContextModel.swift
   Diagnostics.swift
-  IdentityResolver.swift
+  ManifestJSONParser.swift
   ManifestLoader.swift
   ManifestLoader+Validation.swift
+  ManifestSignatureParser.swift
   ModuleMapGenerator.swift
   PackageBuilder.swift
-  ManifestJSONParser.swift
+  PackageDescriptionSerialization.swift
+  Platform.swift
   PkgConfig.swift
+  RegistryReleaseMetadataSerialization.swift
   Target+PkgConfig.swift
   TargetSourcesBuilder.swift
   ToolsVersionParser.swift)
@@ -23,18 +26,17 @@ target_link_libraries(PackageLoading PUBLIC
   TSCBasic
   Basics
   PackageModel
-  SourceControl
   TSCUtility)
 target_link_libraries(PackageLoading PUBLIC
   $<$<NOT:$<PLATFORM_ID:Darwin>>:Foundation>)
+target_link_libraries(PackageLoading PRIVATE
+  SourceControl)
 # NOTE(compnerd) workaround for CMake not setting up include flags yet
 set_target_properties(PackageLoading PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_Swift_MODULE_DIRECTORY})
 
-if(USE_CMAKE_INSTALL)
 install(TARGETS PackageLoading
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-endif()
 set_property(GLOBAL APPEND PROPERTY SwiftPM_EXPORTS PackageLoading)

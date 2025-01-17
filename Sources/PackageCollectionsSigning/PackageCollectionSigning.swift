@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2021-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -10,12 +10,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-import Dispatch
-import Foundation
 
 import Basics
+import Dispatch
+import Foundation
 import PackageCollectionsModel
-import TSCBasic
+
+#if USE_IMPL_ONLY_IMPORTS
+@_implementationOnly import _CryptoExtras
+@_implementationOnly import Crypto
+@_implementationOnly import X509
+#else
+import _CryptoExtras
+import Crypto
+import X509
+#endif
 
 public protocol PackageCollectionSigner {
     /// Signs package collection using the given certificate and key.
@@ -26,12 +35,12 @@ public protocol PackageCollectionSigner {
     ///                     must be the first in the array.
     ///   - privateKeyPEM: Data of the private key (*.pem) of the certificate
     ///   - certPolicyKey: The key of the `CertificatePolicy` to use for validating certificates
-    ///   - callback: The callback to invoke when the signed collection is available.
-    func sign(collection: PackageCollectionModel.V1.Collection,
-              certChainPaths: [URL],
-              privateKeyPEM: Data,
-              certPolicyKey: CertificatePolicyKey,
-              callback: @escaping (Result<PackageCollectionModel.V1.SignedCollection, Error>) -> Void)
+    func sign(
+        collection: PackageCollectionModel.V1.Collection,
+        certChainPaths: [URL],
+        privateKeyPEM: Data,
+        certPolicyKey: CertificatePolicyKey
+    ) async throws -> PackageCollectionModel.V1.SignedCollection
 }
 
 extension PackageCollectionSigner {
@@ -43,22 +52,19 @@ extension PackageCollectionSigner {
     ///                     must be the first in the array.
     ///   - certPrivateKeyPath: Path to the private key (*.pem) of the certificate
     ///   - certPolicyKey: The key of the `CertificatePolicy` to use for validating certificates
-    ///   - callback: The callback to invoke when the signed collection is available.
-    public func sign(collection: PackageCollectionModel.V1.Collection,
-                     certChainPaths: [URL],
-                     certPrivateKeyPath: URL,
-                     certPolicyKey: CertificatePolicyKey = .default,
-                     callback: @escaping (Result<PackageCollectionModel.V1.SignedCollection, Error>) -> Void) {
-        do {
-            let privateKey = try Data(contentsOf: certPrivateKeyPath)
-            self.sign(collection: collection,
-                      certChainPaths: certChainPaths,
-                      privateKeyPEM: privateKey,
-                      certPolicyKey: certPolicyKey,
-                      callback: callback)
-        } catch {
-            callback(.failure(error))
-        }
+    public func sign(
+        collection: PackageCollectionModel.V1.Collection,
+        certChainPaths: [URL],
+        certPrivateKeyPath: URL,
+        certPolicyKey: CertificatePolicyKey = .default
+    ) async throws -> PackageCollectionModel.V1.SignedCollection {
+        let privateKey = try Data(contentsOf: certPrivateKeyPath)
+        return try await self.sign(
+            collection: collection,
+            certChainPaths: certChainPaths,
+            privateKeyPEM: privateKey,
+            certPolicyKey: certPolicyKey
+        )
     }
 }
 
@@ -68,15 +74,15 @@ public protocol PackageCollectionSignatureValidator {
     /// - Parameters:
     ///   - signedCollection: The signed package collection
     ///   - certPolicyKey: The key of the `CertificatePolicy` to use for validating certificates
-    ///   - callback: The callback to invoke when the result is available.
-    func validate(signedCollection: PackageCollectionModel.V1.SignedCollection,
-                  certPolicyKey: CertificatePolicyKey,
-                  callback: @escaping (Result<Void, Error>) -> Void)
+    func validate(
+        signedCollection: PackageCollectionModel.V1.SignedCollection,
+        certPolicyKey: CertificatePolicyKey
+    ) async throws
 }
 
 // MARK: - Implementation
 
-public struct PackageCollectionSigning: PackageCollectionSigner, PackageCollectionSignatureValidator {
+public actor PackageCollectionSigning: PackageCollectionSigner, PackageCollectionSignatureValidator {
     public typealias Model = PackageCollectionModel.V1
 
     private static let minimumRSAKeySizeInBits = 2048
@@ -86,9 +92,6 @@ public struct PackageCollectionSigning: PackageCollectionSigner, PackageCollecti
     /// Root certificates to be trusted in additional to those found in `trustedRootCertsDir`
     private let additionalTrustedRootCerts: [Certificate]?
 
-    /// The `DispatchQueue` to use for callbacks
-    private let callbackQueue: DispatchQueue
-
     /// Internal cache/storage of `CertificatePolicy`s
     private let certPolicies: [CertificatePolicyKey: CertificatePolicy]
 
@@ -97,7 +100,11 @@ public struct PackageCollectionSigning: PackageCollectionSigner, PackageCollecti
 
     private let observabilityScope: ObservabilityScope
 
-    public init(trustedRootCertsDir: URL? = nil, additionalTrustedRootCerts: [String]? = nil, observabilityScope: ObservabilityScope, callbackQueue: DispatchQueue) {
+    public init(
+        trustedRootCertsDir: URL? = nil,
+        additionalTrustedRootCerts: [String]? = nil,
+        observabilityScope: ObservabilityScope
+    ) {
         self.trustedRootCertsDir = trustedRootCertsDir
         self.additionalTrustedRootCerts = additionalTrustedRootCerts.map { $0.compactMap {
             guard let data = Data(base64Encoded: $0) else {
@@ -105,26 +112,27 @@ public struct PackageCollectionSigning: PackageCollectionSigner, PackageCollecti
                 return nil
             }
             do {
-                return try Certificate(derEncoded: data)
+                return try Certificate(derEncoded: Array(data))
             } catch {
-                observabilityScope.emit(error: "The certificate \($0) is not in valid DER format: \(error)")
+                observabilityScope.emit(
+                    error: "The certificate \($0) is not in valid DER format",
+                    underlyingError: error
+                )
                 return nil
             }
         } }
 
-        self.callbackQueue = callbackQueue
         self.certPolicies = [:]
         self.encoder = JSONEncoder.makeWithDefaults()
         self.decoder = JSONDecoder.makeWithDefaults()
         self.observabilityScope = observabilityScope
     }
 
-    init(certPolicy: CertificatePolicy, observabilityScope: ObservabilityScope, callbackQueue: DispatchQueue) {
+    init(certPolicy: CertificatePolicy, observabilityScope: ObservabilityScope) {
         // These should be set through the given CertificatePolicy
         self.trustedRootCertsDir = nil
         self.additionalTrustedRootCerts = nil
 
-        self.callbackQueue = callbackQueue
         self.certPolicies = [CertificatePolicyKey.custom: certPolicy]
         self.encoder = JSONEncoder.makeWithDefaults()
         self.decoder = JSONDecoder.makeWithDefaults()
@@ -133,18 +141,33 @@ public struct PackageCollectionSigning: PackageCollectionSigner, PackageCollecti
 
     private func getCertificatePolicy(key: CertificatePolicyKey) throws -> CertificatePolicy {
         switch key {
-        case .default(let subjectUserID):
+        case .default(let subjectUserID, let subjectOrganizationalUnit):
             // Create new instance each time since contents of trustedRootCertsDir might change
-            return DefaultCertificatePolicy(trustedRootCertsDir: self.trustedRootCertsDir, additionalTrustedRootCerts: self.additionalTrustedRootCerts,
-                                            expectedSubjectUserID: subjectUserID, observabilityScope: observabilityScope, callbackQueue: self.callbackQueue)
-        case .appleSwiftPackageCollection(let subjectUserID):
+            return DefaultCertificatePolicy(
+                trustedRootCertsDir: self.trustedRootCertsDir,
+                additionalTrustedRootCerts: self.additionalTrustedRootCerts,
+                expectedSubjectUserID: subjectUserID,
+                expectedSubjectOrganizationalUnit: subjectOrganizationalUnit,
+                observabilityScope: self.observabilityScope
+            )
+        case .appleSwiftPackageCollection(let subjectUserID, let subjectOrganizationalUnit):
             // Create new instance each time since contents of trustedRootCertsDir might change
-            return AppleSwiftPackageCollectionCertificatePolicy(trustedRootCertsDir: self.trustedRootCertsDir, additionalTrustedRootCerts: self.additionalTrustedRootCerts,
-                                                                expectedSubjectUserID: subjectUserID, observabilityScope: observabilityScope, callbackQueue: self.callbackQueue)
-        case .appleDistribution(let subjectUserID):
+            return ADPSwiftPackageCollectionCertificatePolicy(
+                trustedRootCertsDir: self.trustedRootCertsDir,
+                additionalTrustedRootCerts: self.additionalTrustedRootCerts,
+                expectedSubjectUserID: subjectUserID,
+                expectedSubjectOrganizationalUnit: subjectOrganizationalUnit,
+                observabilityScope: self.observabilityScope
+            )
+        case .appleDistribution(let subjectUserID, let subjectOrganizationalUnit):
             // Create new instance each time since contents of trustedRootCertsDir might change
-            return AppleDistributionCertificatePolicy(trustedRootCertsDir: self.trustedRootCertsDir, additionalTrustedRootCerts: self.additionalTrustedRootCerts,
-                                                      expectedSubjectUserID: subjectUserID, observabilityScope: observabilityScope, callbackQueue: self.callbackQueue)
+            return ADPAppleDistributionCertificatePolicy(
+                trustedRootCertsDir: self.trustedRootCertsDir,
+                additionalTrustedRootCerts: self.additionalTrustedRootCerts,
+                expectedSubjectUserID: subjectUserID,
+                expectedSubjectOrganizationalUnit: subjectOrganizationalUnit,
+                observabilityScope: self.observabilityScope
+            )
         case .custom:
             // Custom `CertificatePolicy` can be set using the internal initializer only
             guard let certPolicy = self.certPolicies[key] else {
@@ -154,130 +177,135 @@ public struct PackageCollectionSigning: PackageCollectionSigner, PackageCollecti
         }
     }
 
-    public func sign(collection: Model.Collection,
-                     certChainPaths: [URL],
-                     privateKeyPEM: Data,
-                     certPolicyKey: CertificatePolicyKey = .default,
-                     callback: @escaping (Result<Model.SignedCollection, Error>) -> Void) {
+    public func sign(
+        collection: Model.Collection,
+        certChainPaths: [URL],
+        privateKeyPEM: Data,
+        certPolicyKey: CertificatePolicyKey = .default
+    ) async throws -> Model.SignedCollection {
+        let certChainData = try certChainPaths.map { try Data(contentsOf: $0) }
+        // Check that the certificate is valid
+        let certChain = try await self.validateCertChain(certChainData, certPolicyKey: certPolicyKey)
+
+        let privateKeyPEMString = String(decoding: privateKeyPEM, as: UTF8.self)
+
+        let signatureAlgorithm: Signature.Algorithm
+        let signatureProvider: (Data) throws -> Data
+        // Determine key type
         do {
-            let certChainData = try certChainPaths.map { try Data(contentsOf: $0) }
-            // Check that the certificate is valid
-            self.validateCertChain(certChainData, certPolicyKey: certPolicyKey) { result in
-                switch result {
-                case .failure(let error):
-                    return callback(.failure(error))
-                case .success(let certChain):
-                    do {
-                        let certificate = certChain.first! // !-safe because certChain cannot be empty at this point
-                        let keyType = try certificate.keyType()
-
-                        // Signature header
-                        let signatureAlgorithm = Signature.Algorithm.from(keyType: keyType)
-                        let header = Signature.Header(
-                            algorithm: signatureAlgorithm,
-                            certChain: certChainData.map { $0.base64EncodedString() }
-                        )
-
-                        let privateKey: PrivateKey
-                        switch keyType {
-                        case .RSA:
-                            privateKey = try RSAPrivateKey(pem: privateKeyPEM)
-                        case .EC:
-                            privateKey = try ECPrivateKey(pem: privateKeyPEM)
-                        }
-                        try self.validateKey(privateKey)
-
-                        // Generate the signature
-                        let signatureData = try Signature.generate(for: collection, with: header, using: privateKey, jsonEncoder: self.encoder)
-
-                        guard let signature = String(bytes: signatureData, encoding: .utf8) else {
-                            return callback(.failure(PackageCollectionSigningError.invalidSignature))
-                        }
-
-                        let collectionSignature = Model.Signature(
-                            signature: signature,
-                            certificate: Model.Signature.Certificate(
-                                subject: Model.Signature.Certificate.Name(from: try certificate.subject()),
-                                issuer: Model.Signature.Certificate.Name(from: try certificate.issuer())
-                            )
-                        )
-                        callback(.success(Model.SignedCollection(collection: collection, signature: collectionSignature)))
-                    } catch {
-                        callback(.failure(error))
-                    }
-                }
+            let privateKey = try P256.Signing.PrivateKey(pemRepresentation: privateKeyPEMString)
+            signatureAlgorithm = .ES256
+            signatureProvider = {
+                try privateKey.signature(for: SHA256.hash(data: $0)).rawRepresentation
             }
         } catch {
-            callback(.failure(error))
+            do {
+                let privateKey = try _RSA.Signing.PrivateKey(pemRepresentation: privateKeyPEMString)
+
+                guard privateKey.keySizeInBits >= Self.minimumRSAKeySizeInBits else {
+                    throw PackageCollectionSigningError
+                        .invalidKeySize(minimumBits: Self.minimumRSAKeySizeInBits)
+                }
+
+                signatureAlgorithm = .RS256
+                signatureProvider = {
+                    try privateKey.signature(for: SHA256.hash(data: $0), padding: Signature.rsaSigningPadding)
+                        .rawRepresentation
+                }
+            } catch let error as PackageCollectionSigningError {
+                throw error
+            } catch {
+                throw PackageCollectionSigningError.unsupportedKeyType
+            }
         }
+
+        // Generate signature
+        let signatureData = try Signature.generate(
+            payload: collection,
+            certChainData: certChainData,
+            jsonEncoder: self.encoder,
+            signatureAlgorithm: signatureAlgorithm,
+            signatureProvider: signatureProvider
+        )
+
+        guard let signature = String(bytes: signatureData, encoding: .utf8) else {
+            throw PackageCollectionSigningError.invalidSignature
+        }
+
+        let certificate = certChain.first! // !-safe because certChain cannot be empty at this point
+        let collectionSignature = Model.Signature(
+            signature: signature,
+            certificate: Model.Signature.Certificate(
+                subject: Model.Signature.Certificate.Name(from: certificate.subject),
+                issuer: Model.Signature.Certificate.Name(from: certificate.issuer)
+            )
+        )
+        return Model.SignedCollection(collection: collection, signature: collectionSignature)
     }
 
-    /// Validates a signed package collection.
-    ///
-    /// - Parameters:
-    ///   - signedCollection: The signed package collection
-    ///   - certPolicyKey: The key of the `CertificatePolicy` to use for validating certificates
-    ///   - jsonDecoder: The `JSONDecoder` to use
-    ///   - callback: The callback to invoke when the result is available.
-    public func validate(signedCollection: Model.SignedCollection,
-                         certPolicyKey: CertificatePolicyKey = .default,
-                         callback: @escaping (Result<Void, Error>) -> Void) {
-        guard let signature = signedCollection.signature.signature.data(using: .utf8)?.copyBytes() else {
-            return callback(.failure(PackageCollectionSigningError.invalidSignature))
-        }
+    public func validate(
+        signedCollection: Model.SignedCollection,
+        certPolicyKey: CertificatePolicyKey = .default
+    ) async throws {
+        let signatureBytes = Data(signedCollection.signature.signature.utf8).copyBytes()
 
         // Parse the signature
-        let certChainValidate = { certChainData, validateCallback in
-            self.validateCertChain(certChainData, certPolicyKey: certPolicyKey, callback: validateCallback)
+        let certChainValidate = { certChainData in
+            try await self.validateCertChain(certChainData, certPolicyKey: certPolicyKey)
         }
-        Signature.parse(signature, certChainValidate: certChainValidate, jsonDecoder: self.decoder) { result in
-            switch result {
-            case .failure(let error):
-                callback(.failure(error))
-            case .success(let signature):
-                // Verify the collection embedded in the signature is the same as received
-                // i.e., the signature is associated with the given collection and not another
-                guard let collectionFromSignature = try? self.decoder.decode(Model.Collection.self, from: signature.payload),
-                    signedCollection.collection == collectionFromSignature else {
-                    return callback(.failure(PackageCollectionSigningError.invalidSignature))
-                }
-                callback(.success(()))
-            }
+        let signature = try await Signature.parse(
+            signatureBytes,
+            certChainValidate: certChainValidate,
+            jsonDecoder: self.decoder
+        )
+
+        // Verify the collection embedded in the signature is the same as received
+        // i.e., the signature is associated with the given collection and not another
+        guard let collectionFromSignature = try? self.decoder.decode(
+            Model.Collection.self,
+            from: signature.payload
+        ),
+            signedCollection.collection == collectionFromSignature
+        else {
+            throw PackageCollectionSigningError.invalidSignature
         }
     }
 
-    private func validateCertChain(_ certChainData: [Data], certPolicyKey: CertificatePolicyKey, callback: @escaping (Result<[Certificate], Error>) -> Void) {
+    private func validateCertChain(
+        _ certChainData: [Data],
+        certPolicyKey: CertificatePolicyKey
+    ) async throws -> [Certificate] {
         guard !certChainData.isEmpty else {
-            return callback(.failure(PackageCollectionSigningError.emptyCertChain))
+            throw PackageCollectionSigningError.emptyCertChain
         }
 
         do {
-            let certChain = try certChainData.map { try Certificate(derEncoded: $0) }
+            let certChain = try certChainData.map { try Certificate(derEncoded: Array($0)) }
             let certPolicy = try self.getCertificatePolicy(key: certPolicyKey)
-            certPolicy.validate(certChain: certChain) { result in
-                switch result {
-                case .failure(let error):
-                    observabilityScope.emit(error: "\(certPolicyKey): The certificate chain is invalid: \(error)")
-                    if CertificatePolicyError.noTrustedRootCertsConfigured == error as? CertificatePolicyError {
-                        callback(.failure(PackageCollectionSigningError.noTrustedRootCertsConfigured))
-                    } else {
-                        callback(.failure(PackageCollectionSigningError.invalidCertChain))
-                    }
-                case .success:
-                    callback(.success(certChain))
+
+            do {
+                try await certPolicy.validate(certChain: certChain)
+                return certChain
+            } catch {
+                self.observabilityScope.emit(
+                    error: "\(certPolicyKey): The certificate chain is invalid",
+                    underlyingError: error
+                )
+
+                if CertificatePolicyError.noTrustedRootCertsConfigured == error as? CertificatePolicyError {
+                    throw PackageCollectionSigningError.noTrustedRootCertsConfigured
+                } else {
+                    throw PackageCollectionSigningError.invalidCertChain
                 }
             }
+        } catch let error as PackageCollectionSigningError {
+            throw error
         } catch {
-            observabilityScope.emit(error: "An error has occurred while validating certificate chain: \(error)")
-            callback(.failure(PackageCollectionSigningError.invalidCertChain))
-        }
-    }
-
-    private func validateKey(_ privateKey: PrivateKey) throws {
-        if let rsaKey = privateKey as? RSAPrivateKey {
-            guard rsaKey.sizeInBits >= Self.minimumRSAKeySizeInBits else {
-                throw PackageCollectionSigningError.invalidKeySize(minimumBits: Self.minimumRSAKeySizeInBits)
-            }
+            self.observabilityScope.emit(
+                error: "An error has occurred while validating certificate chain",
+                underlyingError: error
+            )
+            throw PackageCollectionSigningError.invalidCertChain
         }
     }
 }
@@ -287,13 +315,20 @@ public enum PackageCollectionSigningError: Error, Equatable {
     case emptyCertChain
     case noTrustedRootCertsConfigured
     case invalidCertChain
+
     case invalidSignature
-    case missingCertInfo
+
+    case unsupportedKeyType
     case invalidKeySize(minimumBits: Int)
 }
 
-private extension PackageCollectionModel.V1.Signature.Certificate.Name {
-    init(from name: CertificateName) {
-        self.init(userID: name.userID, commonName: name.commonName, organizationalUnit: name.organizationalUnit, organization: name.organization)
+extension PackageCollectionModel.V1.Signature.Certificate.Name {
+    fileprivate init(from name: DistinguishedName) {
+        self.init(
+            userID: name.userID,
+            commonName: name.commonName,
+            organizationalUnit: name.organizationalUnitName,
+            organization: name.organizationName
+        )
     }
 }

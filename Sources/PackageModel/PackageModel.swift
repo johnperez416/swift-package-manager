@@ -12,12 +12,9 @@
 
 import Basics
 import struct Foundation.URL
-import TSCBasic
-// Re-export Version from PackageModel, since it is a key part of the model.
-@_exported import struct TSCUtility.Version
 
 import enum TSCUtility.PackageLocation
-import struct TSCUtility.PolymorphicCodableArray
+import struct TSCUtility.Version
 
 /// The basic package representation.
 ///
@@ -47,7 +44,7 @@ import struct TSCUtility.PolymorphicCodableArray
 /// 5. A loaded package, as in #4, for which the targets have also been
 /// loaded. There is not currently a data structure for this, but it is the
 /// result after `PackageLoading.transmute()`.
-public final class Package: Encodable {
+public final class Package {
     /// The identity of the package.
     public let identity: PackageIdentity
 
@@ -58,8 +55,7 @@ public final class Package: Encodable {
     public let path: AbsolutePath
 
     /// The targets contained in the package.
-    @PolymorphicCodableArray
-    public var targets: [Target]
+    public var modules: [Module]
 
     /// The products produced by the package.
     public let products: [Product]
@@ -78,7 +74,7 @@ public final class Package: Encodable {
         identity: PackageIdentity,
         manifest: Manifest,
         path: AbsolutePath,
-        targets: [Target],
+        targets: [Module],
         products: [Product],
         targetSearchPath: AbsolutePath,
         testTargetSearchPath: AbsolutePath
@@ -86,7 +82,7 @@ public final class Package: Encodable {
         self.identity = identity
         self.manifest = manifest
         self.path = path
-        self._targets = .init(wrappedValue: targets)
+        self.modules = targets
         self.products = products
         self.targetSearchPath = targetSearchPath
         self.testTargetSearchPath = testTargetSearchPath
@@ -97,10 +93,13 @@ public final class Package: Encodable {
     }
 }
 
-extension Package {
-    @available(*, deprecated, message: "use DiagnosticsContext instead")
-    public var diagnosticLocation: DiagnosticLocation {
-        return PackageLocation.Local(name: self.manifest.name, packagePath: self.path)
+extension Package: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(self))
+    }
+
+    public static func == (lhs: Package, rhs: Package) -> Bool {
+        ObjectIdentifier(lhs) == ObjectIdentifier(rhs)
     }
 }
 
@@ -121,11 +120,20 @@ extension Package.Error: CustomStringConvertible {
         switch self {
         case .noManifest(let path, let version):
             var string = "\(path) has no Package.swift manifest"
-            if let version = version {
+            if let version {
                 string += " for version \(version)"
             }
             return string
         }
+    }
+}
+
+extension Manifest {
+    public var disambiguateByProductIDs: Bool {
+        return self.toolsVersion >= .v5_8
+    }
+    public var usePackageNameFlag: Bool {
+        return self.toolsVersion >= .v5_9
     }
 }
 

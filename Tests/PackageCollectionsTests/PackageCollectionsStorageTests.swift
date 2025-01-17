@@ -12,55 +12,52 @@
 
 import Basics
 @testable import PackageCollections
-import TSCBasic
-import TSCTestSupport
+import _InternalTestSupport
 import tsan_utils
 import XCTest
 
-import struct TSCUtility.SQLite
-
 class PackageCollectionsStorageTests: XCTestCase {
-    func testHappyCase() throws {
-        try testWithTemporaryDirectory { tmpPath in
-            let path = tmpPath.appending(component: "test.db")
+    func testHappyCase() async throws {
+        try await testWithTemporaryDirectory { tmpPath in
+            let path = tmpPath.appending("test.db")
             let storage = SQLitePackageCollectionsStorage(path: path)
             defer { XCTAssertNoThrow(try storage.close()) }
 
             let mockSources = makeMockSources()
-            try mockSources.forEach { source in
-                XCTAssertThrowsError(try tsc_await { callback in storage.get(identifier: .init(from: source), callback: callback) }, "expected error", { error in
+            for source in mockSources {
+                await XCTAssertAsyncThrowsError(try await storage.get(identifier: .init(from: source)), "expected error", { error in
                     XCTAssert(error is NotFoundError, "Expected NotFoundError")
                 })
             }
 
             let mockCollections = makeMockCollections(count: 50)
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+            for collection in mockCollections {
+                _ = try await storage.put(collection: collection)
             }
 
-            try mockCollections.forEach { collection in
-                let retVal = try tsc_await { callback in storage.get(identifier: collection.identifier, callback: callback) }
+            for collection in mockCollections {
+                let retVal = try await storage.get(identifier: collection.identifier)
                 XCTAssertEqual(retVal.identifier, collection.identifier)
             }
 
             do {
-                let list = try tsc_await { callback in storage.list(callback: callback) }
+                let list = try await storage.list()
                 XCTAssertEqual(list.count, mockCollections.count)
             }
 
             do {
                 let count = Int.random(in: 1 ..< mockCollections.count)
-                let list = try tsc_await { callback in storage.list(identifiers: mockCollections.prefix(count).map { $0.identifier }, callback: callback) }
+                let list = try await storage.list(identifiers: mockCollections.prefix(count).map { $0.identifier })
                 XCTAssertEqual(list.count, count)
             }
 
             do {
-                _ = try tsc_await { callback in storage.remove(identifier: mockCollections.first!.identifier, callback: callback) }
-                let list = try tsc_await { callback in storage.list(callback: callback) }
+                _ = try await storage.remove(identifier: mockCollections.first!.identifier)
+                let list = try await storage.list()
                 XCTAssertEqual(list.count, mockCollections.count - 1)
             }
 
-            XCTAssertThrowsError(try tsc_await { callback in storage.get(identifier: mockCollections.first!.identifier, callback: callback) }, "expected error", { error in
+            await XCTAssertAsyncThrowsError(try await storage.get(identifier: mockCollections.first!.identifier), "expected error", { error in
                 XCTAssert(error is NotFoundError, "Expected NotFoundError")
             })
 
@@ -72,24 +69,24 @@ class PackageCollectionsStorageTests: XCTestCase {
         }
     }
 
-    func testFileDeleted() throws {
+    func testFileDeleted() async throws {
 #if os(Windows)
         try XCTSkipIf(true, "open files cannot be deleted on Windows")
 #endif
         try XCTSkipIf(is_tsan_enabled())
 
-        try testWithTemporaryDirectory { tmpPath in
-            let path = tmpPath.appending(component: "test.db")
+        try await testWithTemporaryDirectory { tmpPath in
+            let path = tmpPath.appending("test.db")
             let storage = SQLitePackageCollectionsStorage(path: path)
             defer { XCTAssertNoThrow(try storage.close()) }
 
             let mockCollections = makeMockCollections(count: 3)
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+            for collection in mockCollections {
+                _ = try await storage.put(collection: collection)
             }
 
-            try mockCollections.forEach { collection in
-                let retVal = try tsc_await { callback in storage.get(identifier: collection.identifier, callback: callback) }
+            for collection in mockCollections {
+                let retVal = try await storage.get(identifier: collection.identifier)
                 XCTAssertEqual(retVal.identifier, collection.identifier)
             }
 
@@ -102,36 +99,36 @@ class PackageCollectionsStorageTests: XCTestCase {
             try storage.fileSystem.removeFileTree(storagePath)
             storage.resetCache()
 
-            XCTAssertThrowsError(try tsc_await { callback in storage.get(identifier: mockCollections.first!.identifier, callback: callback) }, "expected error", { error in
+            await XCTAssertAsyncThrowsError(try await storage.get(identifier: mockCollections.first!.identifier), "expected error", { error in
                 XCTAssert(error is NotFoundError, "Expected NotFoundError")
             })
 
-            XCTAssertNoThrow(try tsc_await { callback in storage.put(collection: mockCollections.first!, callback: callback) })
-            let retVal = try tsc_await { callback in storage.get(identifier: mockCollections.first!.identifier, callback: callback) }
+            _ = try await storage.put(collection: mockCollections.first!)
+            let retVal = try await storage.get(identifier: mockCollections.first!.identifier)
             XCTAssertEqual(retVal.identifier, mockCollections.first!.identifier)
 
             XCTAssertTrue(storage.fileSystem.exists(storagePath), "expected file to exist at \(storagePath)")
         }
     }
 
-    func testFileCorrupt() throws {
+    func testFileCorrupt() async throws {
 #if os(Windows)
         try XCTSkipIf(true, "open files cannot be deleted on Windows")
 #endif
         try XCTSkipIf(is_tsan_enabled())
 
-        try testWithTemporaryDirectory { tmpPath in
-            let path = tmpPath.appending(component: "test.db")
+        try await testWithTemporaryDirectory { tmpPath in
+            let path = tmpPath.appending("test.db")
             let storage = SQLitePackageCollectionsStorage(path: path)
             defer { XCTAssertNoThrow(try storage.close()) }
 
             let mockCollections = makeMockCollections(count: 3)
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+            for collection in mockCollections {
+                _ = try await storage.put(collection: collection)
             }
 
-            try mockCollections.forEach { collection in
-                let retVal = try tsc_await { callback in storage.get(identifier: collection.identifier, callback: callback) }
+            for collection in mockCollections {
+                let retVal = try await storage.get(identifier: collection.identifier)
                 XCTAssertEqual(retVal.identifier, collection.identifier)
             }
 
@@ -142,21 +139,21 @@ class PackageCollectionsStorageTests: XCTestCase {
             try storage.close()
 
             XCTAssertTrue(storage.fileSystem.exists(storagePath), "expected file to exist at \(path)")
-            try storage.fileSystem.writeFileContents(storagePath, bytes: ByteString("blah".utf8))
+            try storage.fileSystem.writeFileContents(storagePath, string: "blah")
 
             let storage2 = SQLitePackageCollectionsStorage(path: path)
             defer { XCTAssertNoThrow(try storage2.close()) }
-            XCTAssertThrowsError(try tsc_await { callback in storage2.get(identifier: mockCollections.first!.identifier, callback: callback) }, "expected error", { error in
+            await XCTAssertAsyncThrowsError(try await storage2.get(identifier: mockCollections.first!.identifier), "expected error", { error in
                 XCTAssert("\(error)".contains("is not a database"), "Expected file is not a database error")
             })
 
-            XCTAssertThrowsError(try tsc_await { callback in storage2.put(collection: mockCollections.first!, callback: callback) }, "expected error", { error in
+            await XCTAssertAsyncThrowsError(try await storage2.put(collection: mockCollections.first!), "expected error", { error in
                 XCTAssert("\(error)".contains("is not a database"), "Expected file is not a database error")
             })
         }
     }
 
-    func testListLessThanBatch() throws {
+    func testListLessThanBatch() async throws {
         var configuration = SQLitePackageCollectionsStorage.Configuration()
         configuration.batchSize = 10
         let storage = SQLitePackageCollectionsStorage(location: .memory, configuration: configuration)
@@ -164,15 +161,15 @@ class PackageCollectionsStorageTests: XCTestCase {
 
         let count = configuration.batchSize / 2
         let mockCollections = makeMockCollections(count: count)
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+        for collection in mockCollections {
+            _ = try await storage.put(collection: collection)
         }
 
-        let list = try tsc_await { callback in storage.list(callback: callback) }
+        let list = try await storage.list()
         XCTAssertEqual(list.count, mockCollections.count)
     }
 
-    func testListNonBatching() throws {
+    func testListNonBatching() async throws {
         var configuration = SQLitePackageCollectionsStorage.Configuration()
         configuration.batchSize = 10
         let storage = SQLitePackageCollectionsStorage(location: .memory, configuration: configuration)
@@ -180,15 +177,15 @@ class PackageCollectionsStorageTests: XCTestCase {
 
         let count = Int(Double(configuration.batchSize) * 2.5)
         let mockCollections = makeMockCollections(count: count)
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+        for collection in mockCollections {
+            _ = try await storage.put(collection: collection)
         }
 
-        let list = try tsc_await { callback in storage.list(callback: callback) }
+        let list = try await storage.list()
         XCTAssertEqual(list.count, mockCollections.count)
     }
 
-    func testListBatching() throws {
+    func testListBatching() async throws {
         var configuration = SQLitePackageCollectionsStorage.Configuration()
         configuration.batchSize = 10
         let storage = SQLitePackageCollectionsStorage(location: .memory, configuration: configuration)
@@ -196,46 +193,46 @@ class PackageCollectionsStorageTests: XCTestCase {
 
         let count = Int(Double(configuration.batchSize) * 2.5)
         let mockCollections = makeMockCollections(count: count)
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+        for collection in mockCollections {
+            _ = try await storage.put(collection: collection)
         }
 
-        let list = try tsc_await { callback in storage.list(identifiers: mockCollections.map { $0.identifier }, callback: callback) }
+        let list = try await storage.list(identifiers: mockCollections.map { $0.identifier })
         XCTAssertEqual(list.count, mockCollections.count)
     }
 
-    func testPutUpdates() throws {
+    func testPutUpdates() async throws {
         let storage = SQLitePackageCollectionsStorage(location: .memory)
         defer { XCTAssertNoThrow(try storage.close()) }
 
         let mockCollections = makeMockCollections(count: 3)
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+        for collection in mockCollections {
+            _ = try await storage.put(collection: collection)
         }
 
-        let list = try tsc_await { callback in storage.list(identifiers: mockCollections.map { $0.identifier }, callback: callback) }
+        let list = try await storage.list(identifiers: mockCollections.map { $0.identifier })
         XCTAssertEqual(list.count, mockCollections.count)
 
-        _ = try tsc_await { callback in storage.put(collection: mockCollections.last!, callback: callback) }
+        _ = try await storage.put(collection: mockCollections.last!)
         XCTAssertEqual(list.count, mockCollections.count)
     }
 
-    func testPopulateTargetTrie() throws {
-        try testWithTemporaryDirectory { tmpPath in
-            let path = tmpPath.appending(component: "test.db")
+    func testPopulateTargetTrie() async throws {
+        try await testWithTemporaryDirectory { tmpPath in
+            let path = tmpPath.appending("test.db")
             let storage = SQLitePackageCollectionsStorage(path: path)
             defer { XCTAssertNoThrow(try storage.close()) }
 
             let mockCollections = makeMockCollections(count: 3)
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in storage.put(collection: collection, callback: callback) }
+            for collection in mockCollections {
+                _ = try await storage.put(collection: collection)
             }
 
             let version = mockCollections.last!.packages.last!.versions.last!
             let targetName = version.defaultManifest!.targets.last!.name
 
             do {
-                let searchResult = try tsc_await { callback in storage.searchTargets(query: targetName, type: .exactMatch, callback: callback) }
+                let searchResult = try await storage.searchTargets(query: targetName, type: .exactMatch)
                 XCTAssert(searchResult.items.count > 0, "should get results")
             }
 
@@ -246,9 +243,9 @@ class PackageCollectionsStorageTests: XCTestCase {
 
             // populateTargetTrie is called in `.init`; call it again explicitly so we know when it's finished
             do {
-                try tsc_await { callback in storage2.populateTargetTrie(callback: callback) }
+                try await storage2.populateTargetTrie()
 
-                let searchResult = try tsc_await { callback in storage2.searchTargets(query: targetName, type: .exactMatch, callback: callback) }
+                let searchResult = try await storage2.searchTargets(query: targetName, type: .exactMatch)
                 XCTAssert(searchResult.items.count > 0, "should get results")
             } catch {
                 // It's possible that some platforms don't have support FTS

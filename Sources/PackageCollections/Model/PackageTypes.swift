@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2020-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2020-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -15,6 +15,8 @@ import struct Foundation.URL
 
 import PackageModel
 import SourceControl
+
+import struct TSCUtility.Version
 
 extension PackageCollectionsModel {
     /// Package metadata
@@ -85,24 +87,6 @@ extension PackageCollectionsModel {
         /// The package's programming languages
         public let languages: Set<String>?
 
-        // deprecated 9/21
-        @available(*, deprecated, message: "use identity and location instead")
-        public var reference: PackageReference {
-            guard let url = URL(string: self.location) else {
-                fatalError("invalid url \(self.location)")
-            }
-            return .init(identity: self.identity, kind: .remoteSourceControl(url), name: nil)
-        }
-
-        // deprecated 9/21
-        @available(*, deprecated, message: "use identity and location instead")
-        public var repository: RepositorySpecifier {
-            guard let url = URL(string: self.location) else {
-                fatalError("invalid url \(self.location)")
-            }
-            return .init(url: url)
-        }
-
         /// Initializes a `Package`
         init(
             identity: PackageIdentity,
@@ -156,30 +140,15 @@ extension PackageCollectionsModel.Package {
 
         /// The package version's license
         public let license: PackageCollectionsModel.License?
+        
+        /// The package version's author
+        public let author: PackageCollectionsModel.Package.Author?
+        
+        /// The package version's signer
+        public let signer: PackageCollectionsModel.Signer?
 
         /// When the package version was created
         public let createdAt: Date?
-        
-        @available(*, deprecated, message: "use manifests instead")
-        public var packageName: String { self.defaultManifest!.packageName }
-
-        @available(*, deprecated, message: "use manifests instead")
-        public var targets: [Target] { self.defaultManifest!.targets }
-
-        @available(*, deprecated, message: "use manifests instead")
-        public var products: [Product] { self.defaultManifest!.products }
-
-        @available(*, deprecated, message: "use manifests instead")
-        public var toolsVersion: ToolsVersion { self.defaultManifest!.toolsVersion }
-
-        @available(*, deprecated, message: "use manifests instead")
-        public var minimumPlatformVersions: [SupportedPlatform]? { nil }
-
-        @available(*, deprecated, message: "use verifiedCompatibility instead")
-        public var verifiedPlatforms: [PackageModel.Platform]? { nil }
-
-        @available(*, deprecated, message: "use verifiedCompatibility instead")
-        public var verifiedSwiftVersions: [SwiftLanguageVersion]? { nil }
 
         public struct Manifest: Equatable, Codable {
             /// The Swift tools version specified in `Package.swift`.
@@ -255,6 +224,38 @@ extension PackageCollectionsModel.Package {
             /// The service name
             public let name: String
         }
+    }
+}
+
+extension PackageCollectionsModel {
+    public struct Signer: Equatable, Codable {
+        /// The signer type.
+        public let type: SignerType
+        
+        /// The common name of the signing certificate's subject.
+        public let commonName: String
+        
+        /// The organizational unit name of the signing certificate's subject.
+        public let organizationalUnitName: String
+        
+        /// The organization name of the signing certificate's subject.
+        public let organizationName: String
+
+        public init(
+            type: SignerType,
+            commonName: String,
+            organizationalUnitName: String,
+            organizationName: String
+        ) {
+            self.type = type
+            self.commonName = commonName
+            self.organizationalUnitName = organizationalUnitName
+            self.organizationName = organizationName
+        }
+    }
+    
+    public enum SignerType: String, Codable {
+        case adp // Apple Developer Program
     }
 }
 

@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2020-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2020-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -23,7 +23,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationOK() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -42,6 +42,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                     Model.Collection.Package.Version(
@@ -59,6 +61,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -106,7 +110,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_tooManyPackages() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -125,6 +129,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -132,7 +138,7 @@ class PackageCollectionValidationTests: XCTestCase {
                 license: nil
             ),
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobaz.git")!,
+                url: "https://package-collection-tests.com/repos/foobaz.git",
                 summary: "Package Foobaz",
                 keywords: ["test package"],
                 versions: [
@@ -151,6 +157,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -182,7 +190,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_noVersions() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [],
@@ -214,7 +222,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_duplicateVersions_emptyProductsAndTargets() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -233,6 +241,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                     Model.Collection.Package.Version(
@@ -250,6 +260,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -291,7 +303,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_nonSemanticVersion() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -310,6 +322,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -341,7 +355,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_tooManyMajorsAndMinors() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -360,6 +374,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                     Model.Collection.Package.Version(
@@ -377,6 +393,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -384,7 +402,7 @@ class PackageCollectionValidationTests: XCTestCase {
                 license: nil
             ),
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobaz.git")!,
+                url: "https://package-collection-tests.com/repos/foobaz.git",
                 summary: "Package Foobaz",
                 keywords: ["test package"],
                 versions: [
@@ -403,6 +421,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                     Model.Collection.Package.Version(
@@ -420,6 +440,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -456,7 +478,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_versionEmptyManifests() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -467,6 +489,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -498,7 +522,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_versionProductNoTargets() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -517,6 +541,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.2",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -548,7 +574,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_manifestToolsVersionMismatch() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -567,6 +593,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.1",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],
@@ -598,7 +626,7 @@ class PackageCollectionValidationTests: XCTestCase {
     func test_validationFailed_missingDefaultManifest() throws {
         let packages = [
             Model.Collection.Package(
-                url: URL(string: "https://package-collection-tests.com/repos/foobar.git")!,
+                url: "https://package-collection-tests.com/repos/foobar.git",
                 summary: "Package Foobar",
                 keywords: ["test package"],
                 versions: [
@@ -617,6 +645,8 @@ class PackageCollectionValidationTests: XCTestCase {
                         defaultToolsVersion: "5.1",
                         verifiedCompatibility: nil,
                         license: nil,
+                        author: nil,
+                        signer: nil,
                         createdAt: nil
                     ),
                 ],

@@ -32,12 +32,13 @@
 ///
 /// To learn more about package resources, see
 /// <doc:bundling-resources-with-a-swift-package>.
-public struct Resource: Encodable {
+@available(_PackageDescription, introduced: 5.3)
+public struct Resource: Sendable {
 
     /// Defines the explicit type of localization for resources.
-    public enum Localization: String, Encodable {
+    public enum Localization: String, Sendable {
 
-        /// A constant that represents default internationalization.
+        /// A constant that represents default localization.
         case `default`
 
         /// A constant that represents base internationalization.
@@ -45,13 +46,13 @@ public struct Resource: Encodable {
     }
 
     /// The rule for the resource.
-    private let rule: String
-
+    let rule: String
+	
     /// The path of the resource.
-    private let path: String
+    let path: String
 
     /// The explicit type of localization for the resource.
-    private let localization: Localization?
+    let localization: Localization?
 
     private init(rule: String, path: String, localization: Localization?) {
         self.rule = rule
@@ -93,5 +94,15 @@ public struct Resource: Encodable {
     /// - Returns: A `Resource` instance.
     public static func copy(_ path: String) -> Resource {
         return Resource(rule: "copy", path: path, localization: nil)
+    }
+
+    /// Applies the embed rule to a resource at the given path.
+    ///
+    /// You can use the embed rule to embed the contents of the resource into the executable code.
+    /// - Parameter path: The path for a resource.
+    /// - Returns: A `Resource` instance.
+    @available(_PackageDescription, introduced: 5.9)
+    public static func embedInCode(_ path: String) -> Resource {
+        return Resource(rule: "embedInCode", path: path, localization: nil)
     }
 }

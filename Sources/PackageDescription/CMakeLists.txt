@@ -13,12 +13,15 @@ add_library(PackageDescription
   LanguageStandardSettings.swift
   PackageDescription.swift
   PackageDescriptionSerialization.swift
+  PackageDescriptionSerializationConversion.swift
   PackageDependency.swift
+  PackageDependencyTrait.swift
   PackageRequirement.swift
   Product.swift
   Resource.swift
   SupportedPlatforms.swift
   Target.swift
+  Trait.swift
   Version.swift
   Version+StringLiteralConvertible.swift)
 
@@ -26,11 +29,6 @@ target_compile_options(PackageDescription PUBLIC
   $<$<COMPILE_LANGUAGE:Swift>:-package-description-version$<SEMICOLON>999.0>)
 
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL Darwin)
-  target_compile_options(PackageDescription PUBLIC
-    $<$<COMPILE_LANGUAGE:Swift>:-enable-library-evolution>)
-  set(SWIFT_INTERFACE_PATH ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftinterface)
-  target_compile_options(PackageDescription PUBLIC
-    $<$<COMPILE_LANGUAGE:Swift>:-emit-module-interface-path$<SEMICOLON>${SWIFT_INTERFACE_PATH}>)
   target_link_options(PackageDescription PRIVATE
     "SHELL:-Xlinker -install_name -Xlinker @rpath/libPackageDescription.dylib")
 endif()
@@ -56,19 +54,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL Darwin)
     INSTALL_RPATH "$ORIGIN/../../$<LOWER_CASE:${CMAKE_SYSTEM_NAME}>")
 endif()
 
-if(CMAKE_HOST_SYSTEM_NAME STREQUAL Darwin)
-  install(FILES
-    ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftinterface
-    ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftdoc
-    DESTINATION lib/swift/pm/ManifestAPI
-  )
-else()
-  install(FILES
-    ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftmodule
-    ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftdoc
-    DESTINATION lib/swift/pm/ManifestAPI
-  )
-endif()
+install(FILES
+  ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftmodule
+  ${CMAKE_BINARY_DIR}/pm/ManifestAPI/PackageDescription.swiftdoc
+  DESTINATION lib/swift/pm/ManifestAPI
+)
 
 install(TARGETS PackageDescription
   DESTINATION lib/swift/pm/ManifestAPI)

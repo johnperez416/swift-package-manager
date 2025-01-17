@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import Foundation
-import TSCBasic
 
 public struct WindowsSDKSettings {
     public struct DefaultProperties {
@@ -53,9 +53,9 @@ extension WindowsSDKSettings: Decodable {
 }
 
 extension WindowsSDKSettings {
-    public init?(reading path: AbsolutePath, diagnostics: DiagnosticsEngine?, filesystem: FileSystem) {
+    public init?(reading path: AbsolutePath, observabilityScope: ObservabilityScope?, filesystem: FileSystem) {
         guard filesystem.exists(path) else {
-            diagnostics?.emit(error: "missing SDKSettings.plist at '\(path)'")
+            observabilityScope?.emit(error: "missing SDKSettings.plist at '\(path)'")
             return nil
         }
 
@@ -63,7 +63,10 @@ extension WindowsSDKSettings {
             let data: Data = try filesystem.readFileContents(path)
             self = try PropertyListDecoder().decode(WindowsSDKSettings.self, from: data)
         } catch {
-            diagnostics?.emit(error: "failed to load SDKSettings.plist at '\(path)': \(error)")
+            observabilityScope?.emit(
+                error: "failed to load SDKSettings.plist at '\(path)'",
+                underlyingError: error
+            )
             return nil
         }
     }
@@ -74,6 +77,10 @@ public struct WindowsPlatformInfo {
         /// XCTEST_VERSION
         /// specifies the version string of the bundled XCTest.
         public let xctestVersion: String
+
+        /// SWIFT_TESTING_VERSION
+        /// specifies the version string of the bundled swift-testing.
+        public let swiftTestingVersion: String?
 
         /// SWIFTC_FLAGS
         /// Specifies extra flags to pass to swiftc from Swift Package Manager.
@@ -86,6 +93,7 @@ public struct WindowsPlatformInfo {
 extension WindowsPlatformInfo.DefaultProperties: Decodable {
     enum CodingKeys: String, CodingKey {
     case xctestVersion = "XCTEST_VERSION"
+    case swiftTestingVersion = "SWIFT_TESTING_VERSION"
     case extraSwiftCFlags = "SWIFTC_FLAGS"
     }
 }
@@ -97,9 +105,9 @@ extension WindowsPlatformInfo: Decodable {
 }
 
 extension WindowsPlatformInfo {
-    public init?(reading path: AbsolutePath, diagnostics: DiagnosticsEngine?, filesystem: FileSystem) {
+    public init?(reading path: AbsolutePath, observabilityScope: ObservabilityScope?, filesystem: FileSystem) {
         guard filesystem.exists(path) else {
-            diagnostics?.emit(error: "missing Info.plist at '\(path)'")
+            observabilityScope?.emit(error: "missing Info.plist at '\(path)'")
             return nil
         }
 
@@ -107,7 +115,10 @@ extension WindowsPlatformInfo {
             let data: Data = try filesystem.readFileContents(path)
             self = try PropertyListDecoder().decode(WindowsPlatformInfo.self, from: data)
         } catch {
-            diagnostics?.emit(error: "failed to load Info.plist at '\(path)': \(error)")
+            observabilityScope?.emit(
+                error: "failed to load Info.plist at '\(path)'",
+                underlyingError: error
+            )
             return nil
         }
     }

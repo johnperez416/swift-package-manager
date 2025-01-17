@@ -10,12 +10,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-/// A build environment with which to evaluation conditions.
-public struct BuildEnvironment: Codable {
+/// A build environment with which to evaluate conditions.
+public struct BuildEnvironment {
     public let platform: Platform
-    public let configuration: BuildConfiguration
+    public let configuration: BuildConfiguration?
 
-    public init(platform: Platform, configuration: BuildConfiguration) {
+    public init(platform: Platform, configuration: BuildConfiguration? = nil) {
         self.platform = platform
         self.configuration = configuration
     }

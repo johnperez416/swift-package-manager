@@ -67,7 +67,7 @@ To list the plugins that are available within the context of a package, use the 
 ❯ swift package plugin --list
 ```
 
-Command plugins that need to write to the file system will cause SwiftPM to ask the user for approval if `swift package` is invoked from a console, or deny the request if it is not.  Passing the `--allow-writing-to-package-directory` flag to the `swift package` invocation will allow the request without questions — this is particularly useful in a Continuous Integration environment.
+Command plugins that need to write to the file system will cause SwiftPM to ask the user for approval if `swift package` is invoked from a console, or deny the request if it is not.  Passing the `--allow-writing-to-package-directory` flag to the `swift package` invocation will allow the request without questions — this is particularly useful in a Continuous Integration environment. Similarly, the `--allow-network-connections` flag can be used to allow network connections without showing a prompt.
 
 ## Writing a Plugin
 
@@ -132,7 +132,7 @@ The `plugin` product is what makes the plugin visible to other packages that hav
 
 The dependencies specify the command line tools that will be available for use in commands constructed by the plugin.  Each dependency can be either an `executableTarget` or a `binaryTarget` target in the same package, or can be an `executable` product in another package (there are no binary products in SwiftPM).  In the example above, the plugin depends on the hypothetical _SomeTool_ product in the _sometool_ package on which the package that defines the plugin has a dependency.  Note that this does not necessarily mean that _SomeTool_ will have been built when the plugin is invoked — it only means that the plugin will be able to look up the path at which the tool will exist at the time any commands constructed by the plugin are run.
 
-Executable dependencies are built for the host platform as part of the build, while binary dependencies are references to `artifactbundle` archives that contains prebuilt binaries (see [SE-305](https://github.com/apple/swift-evolution/blob/main/proposals/0305-swiftpm-binary-target-improvements.md)).  Binary targets are often used when the tool is built using a different build system than SwiftPM, or when building it on demand is prohibitively expensive or requires a special build environment.
+Executable dependencies are built for the host platform as part of the build, while binary dependencies are references to `artifactbundle` archives that contains prebuilt binaries (see [SE-305](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0305-swiftpm-binary-target-improvements.md)).  Binary targets are often used when the tool is built using a different build system than SwiftPM, or when building it on demand is prohibitively expensive or requires a special build environment.
 
 #### Implementing the build tool plugin script
 
@@ -149,7 +149,7 @@ import PackagePlugin
 struct MyPlugin: BuildToolPlugin {
     
     func createBuildCommands(context: PluginContext, target: Target) throws -> [Command] {
-        guard let target = target as? SourceModuleTarget else { return [] }
+        guard let target = target.sourceModule else { return [] }
         let inputFiles = target.sourceFiles.filter({ $0.path.extension == "dat" })
         return try inputFiles.map {
             let inputFile = $0
@@ -300,7 +300,7 @@ struct MyCommandPlugin: CommandPlugin {
         for target in targets {
             // Skip any type of target that doesn't have source files.
             // Note: We could choose to instead emit a warning or error here.
-            guard let target = target as? SourceModuleTarget else { continue }
+            guard let target = target.sourceModule else { continue }
 
             // Invoke `sometool` on the target directory, passing a configuration
             // file from the package directory.
@@ -326,7 +326,7 @@ struct MyCommandPlugin: CommandPlugin {
 }
 ```
 
-Unlike build tool plugins, which are always applied to a single package target, a command plugin does not necessaily operate on just a single target.  The `context` parameter provides access to the inputs, including to a distilled version of the package graph rooted at the package to which the command plugin is applied.
+Unlike build tool plugins, which are always applied to a single package target, a command plugin does not necessarily operate on just a single target.  The `context` parameter provides access to the inputs, including to a distilled version of the package graph rooted at the package to which the command plugin is applied.
 
 Command plugins can also accept arguments, which can control options for the plugin's actions or can further narrow down what the plugin operates on.  This example supports the convention of passing `--target` to limit the scope of the plugin to a set of targets in the package.
 
@@ -376,3 +376,8 @@ The `XcodePluginContext` input structure is similar to the regular `PluginContex
 If any targets are chosen in the Xcode user interface, Xcode passes their names as `--target` arguments to the plugin.
 
 It is expected that other IDEs or custom environments that use SwiftPM could similarly provide modules that define new entry points and extend the functionality of the core `PackagePlugin` APIs.
+
+### References
+
+- "Meet Swift Package plugins" [WWDC22 session](https://developer.apple.com/videos/play/wwdc2022-110359)
+- "Create Swift Package plugins" [WWDC22 session](https://developer.apple.com/videos/play/wwdc2022-110401)

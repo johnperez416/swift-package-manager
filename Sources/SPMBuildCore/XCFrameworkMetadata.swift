@@ -10,11 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+import struct Basics.AbsolutePath
+import protocol Basics.FileSystem
+import struct Basics.Triple
 import Foundation
 import PackageModel
-import TSCBasic
 
-import struct TSCUtility.Triple
+import struct TSCBasic.StringError
 
 public struct XCFrameworkMetadata: Equatable {
     public struct Library: Equatable {
@@ -23,19 +25,22 @@ public struct XCFrameworkMetadata: Equatable {
         public let headersPath: String?
         public let platform: String
         public let architectures: [String]
+        public let variant: String?
 
         public init(
             libraryIdentifier: String,
             libraryPath: String,
             headersPath: String?,
             platform: String,
-            architectures: [String]
+            architectures: [String],
+            variant: String?
         ) {
             self.libraryIdentifier = libraryIdentifier
             self.libraryPath = libraryPath
             self.headersPath = headersPath
             self.platform = platform
             self.architectures = architectures
+            self.variant = variant
         }
     }
 
@@ -48,7 +53,7 @@ public struct XCFrameworkMetadata: Equatable {
 
 extension XCFrameworkMetadata {
     public static func parse(fileSystem: FileSystem, rootPath: AbsolutePath) throws -> XCFrameworkMetadata {
-        let path = rootPath.appending(component: "Info.plist")
+        let path = rootPath.appending("Info.plist")
         guard fileSystem.exists(path) else {
             throw StringError("XCFramework Info.plist not found at '\(rootPath)'")
         }
@@ -58,7 +63,7 @@ extension XCFrameworkMetadata {
             let decoder = PropertyListDecoder()
             return try decoder.decode(XCFrameworkMetadata.self, from: data)
         } catch {
-            throw StringError("failed parsing XCFramework Info.plist at '\(path)': \(error)")
+            throw StringError("failed parsing XCFramework Info.plist at '\(path)': \(error.interpolationDescription)")
         }
     }
 }
@@ -76,7 +81,6 @@ extension XCFrameworkMetadata.Library: Decodable {
         case headersPath = "HeadersPath"
         case platform = "SupportedPlatform"
         case architectures = "SupportedArchitectures"
+        case variant = "SupportedPlatformVariant"
     }
 }
-
-extension Triple.Arch: Decodable {}

@@ -10,9 +10,34 @@
 //
 //===----------------------------------------------------------------------===//
 
-@_implementationOnly import Foundation
+import Foundation
 #if os(Windows)
 @_implementationOnly import ucrt
+
+internal func dup(_ fd: CInt) -> CInt {
+    return _dup(fd)
+}
+internal func dup2(_ fd1: CInt, _ fd2: CInt) -> CInt {
+    return _dup2(fd1, fd2)
+}
+internal func close(_ fd: CInt) -> CInt {
+    return _close(fd)
+}
+internal func fileno(_ fh: UnsafeMutablePointer<FILE>?) -> CInt {
+    return _fileno(fh)
+}
+
+internal func strerror(_ errno: CInt) -> String? {
+    // MSDN indicates that the returned string can have a maximum of 94
+    // characters, so allocate 95 characters.
+    return withUnsafeTemporaryAllocation(of: wchar_t.self, capacity: 95) {
+        let result = _wcserror_s($0.baseAddress, $0.count, errno)
+        guard result == 0, let baseAddress = $0.baseAddress else { return nil }
+        return String(decodingCString: baseAddress, as: UTF16.self)
+    }
+}
+#elseif canImport(Android)
+import Android
 #endif
 
 //
@@ -35,7 +60,7 @@
 //
 // Within the plugin process, `stdout` is redirected to `stderr` so that print
 // statements from the plugin are treated as plain-text output, and `stdin` is
-// closed so that any attemps by the plugin logic to read from console result
+// closed so that any attempts by the plugin logic to read from console result
 // in errors instead of blocking the process. The original `stdin` and `stdout`
 // are duplicated for use as messaging pipes, and are not directly used by the
 // plugin logic.
@@ -118,7 +143,7 @@ extension Plugin {
     fileprivate static func handleMessage(_ message: HostToPluginMessage) async throws {
         switch message {
             
-        case .createBuildToolCommands(let wireInput, let rootPackageId, let targetId):
+        case .createBuildToolCommands(let wireInput, let rootPackageId, let targetId, let generatedSources, let generatedResources):
             // Deserialize the context from the wire input structures. The root
             // package is the one we'll set the context's `package` property to.
             let context: PluginContext
@@ -126,19 +151,30 @@ extension Plugin {
             do {
                 var deserializer = PluginContextDeserializer(wireInput)
                 let package = try deserializer.package(for: rootPackageId)
-                let pluginWorkDirectory = try deserializer.path(for: wireInput.pluginWorkDirId)
+                let pluginWorkDirectory = try deserializer.url(for: wireInput.pluginWorkDirId)
                 let toolSearchDirectories = try wireInput.toolSearchDirIds.map {
-                    try deserializer.path(for: $0)
+                    try deserializer.url(for: $0)
                 }
-                let toolNamesToPaths = try wireInput.toolNamesToPathIds.mapValues {
-                    try deserializer.path(for: $0)
+                let accessibleTools = try wireInput.accessibleTools.mapValues { (tool: HostToPluginMessage.InputContext.Tool) -> (URL, [String]?) in
+                    let path = try deserializer.url(for: tool.path)
+                    return (path, tool.triples)
                 }
-                context = PluginContext(
+
+                context = try PluginContext(
                     package: package,
-                    pluginWorkDirectory: pluginWorkDirectory,
-                    toolNamesToPaths: toolNamesToPaths,
-                    toolSearchDirectories: toolSearchDirectories)
-                target = try deserializer.target(for: targetId)
+                    pluginWorkDirectory: Path(url: pluginWorkDirectory),
+                    pluginWorkDirectoryURL: pluginWorkDirectory,
+                    accessibleTools: accessibleTools,
+                    toolSearchDirectories: toolSearchDirectories.map { try Path(url: $0) },
+                    toolSearchDirectoryURLs: toolSearchDirectories)
+
+                let pluginGeneratedSources = try generatedSources.map { try deserializer.url(for: $0) }
+                let pluginGeneratedResources = try generatedResources.map { try deserializer.url(for: $0) }
+                target = try deserializer.target(
+                    for: targetId,
+                    pluginGeneratedSources: pluginGeneratedSources,
+                    pluginGeneratedResources: pluginGeneratedResources
+                )
             }
             catch {
                 internalError("Couldn’t deserialize input from host: \(error).")
@@ -166,30 +202,32 @@ extension Plugin {
             // Send each of the generated commands to the host.
             for command in generatedCommands {
                 switch command {
-                    
-                case let ._buildCommand(name, exec, args, env, workdir, inputs, outputs):
+
+                case .buildCommand(let displayName, let executable, let arguments, let environment, let inputFiles, let outputFiles):
                     let command = PluginToHostMessage.CommandConfiguration(
-                        displayName: name,
-                        executable: exec.string,
-                        arguments: args,
-                        environment: env,
-                        workingDirectory: workdir?.string)
+                        displayName: displayName,
+                        executable: executable,
+                        arguments: arguments,
+                        environment: environment
+                    )
                     let message = PluginToHostMessage.defineBuildCommand(
                         configuration: command,
-                        inputFiles: inputs.map{ $0.string },
-                        outputFiles: outputs.map{ $0.string })
+                        inputFiles: inputFiles,
+                        outputFiles: outputFiles
+                    )
                     try pluginHostConnection.sendMessage(message)
-                    
-                case let ._prebuildCommand(name, exec, args, env, workdir, outdir):
+
+                case .prebuildCommand(let displayName, let executable, let arguments, let environment, let outputFilesDirectory):
                     let command = PluginToHostMessage.CommandConfiguration(
-                        displayName: name,
-                        executable: exec.string,
-                        arguments: args,
-                        environment: env,
-                        workingDirectory: workdir?.string)
+                        displayName: displayName,
+                        executable: executable,
+                        arguments: arguments,
+                        environment: environment
+                    )
                     let message = PluginToHostMessage.definePrebuildCommand(
                         configuration: command,
-                        outputFilesDirectory: outdir.string)
+                        outputFilesDirectory: outputFilesDirectory
+                    )
                     try pluginHostConnection.sendMessage(message)
                 }
             }
@@ -204,18 +242,21 @@ extension Plugin {
             do {
                 var deserializer = PluginContextDeserializer(wireInput)
                 let package = try deserializer.package(for: rootPackageId)
-                let pluginWorkDirectory = try deserializer.path(for: wireInput.pluginWorkDirId)
+                let pluginWorkDirectory = try deserializer.url(for: wireInput.pluginWorkDirId)
                 let toolSearchDirectories = try wireInput.toolSearchDirIds.map {
-                    try deserializer.path(for: $0)
+                    try deserializer.url(for: $0)
                 }
-                let toolNamesToPaths = try wireInput.toolNamesToPathIds.mapValues {
-                    try deserializer.path(for: $0)
+                let accessibleTools = try wireInput.accessibleTools.mapValues { (tool: HostToPluginMessage.InputContext.Tool) -> (URL, [String]?) in
+                    let path = try deserializer.url(for: tool.path)
+                    return (path, tool.triples)
                 }
-                context = PluginContext(
+                context = try PluginContext(
                     package: package,
-                    pluginWorkDirectory: pluginWorkDirectory,
-                    toolNamesToPaths: toolNamesToPaths,
-                    toolSearchDirectories: toolSearchDirectories)
+                    pluginWorkDirectory: Path(url: pluginWorkDirectory),
+                    pluginWorkDirectoryURL: pluginWorkDirectory,
+                    accessibleTools: accessibleTools,
+                    toolSearchDirectories: toolSearchDirectories.map { try Path(url: $0) },
+                    toolSearchDirectoryURLs: toolSearchDirectories)
             }
             catch {
                 internalError("Couldn’t deserialize input from host: \(error).")
@@ -251,8 +292,12 @@ extension Plugin {
     
     // Private function to construct an error message from an `errno` code.
     fileprivate static func describe(errno: Int32) -> String {
+#if os(Windows)
+        return strerror(errno) ?? String(errno)
+#else
         if let cStr = strerror(errno) { return String(cString: cStr) }
         return String(describing: errno)
+#endif
     }
 }
 
@@ -287,7 +332,7 @@ internal struct MessageConnection<TX,RX> where TX: Encodable, RX: Decodable {
         }
         
         // Decode the count.
-        let count = header.withUnsafeBytes{ $0.load(as: UInt64.self).littleEndian }
+        let count = header.withUnsafeBytes{ $0.loadUnaligned(as: UInt64.self).littleEndian }
         guard count >= 2 else {
             throw PluginMessageError.invalidPayloadSize
         }

@@ -2,10 +2,11 @@
 
 ## Topics
 
-### Create a Permission
+### Create a permission
 
+- ``allowNetworkConnections(scope:reason:)``
 - ``writeToPackageDirectory(reason:)``
 
-### Encoding and Decoding
+### Allow network connection
 
-- ``encode(to:)``
+- ``PluginNetworkPermissionScope``

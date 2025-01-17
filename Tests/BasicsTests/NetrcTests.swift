@@ -13,9 +13,6 @@
 import Basics
 import XCTest
 
-/// Netrc feature depends upon `NSTextCheckingResult.range(withName name: String) -> NSRange`,
-/// which is only available in macOS 10.13+ at this time.
-@available(macOS 10.13, iOS 11, tvOS 11, watchOS 4, *)
 class NetrcTests: XCTestCase {
     /// should load machines for a given inline format
     func testLoadMachinesInline() throws {
@@ -29,11 +26,11 @@ class NetrcTests: XCTestCase {
         XCTAssertEqual(machine?.login, "anonymous")
         XCTAssertEqual(machine?.password, "qwerty")
 
-        let authorization = netrc.authorization(for: URL(string: "http://example.com/resource.zip")!)
+        let authorization = netrc.authorization(for: "http://example.com/resource.zip")
         XCTAssertEqual(authorization, Netrc.Authorization(login: "anonymous", password: "qwerty"))
 
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://example2.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://www.example2.com/resource.zip")!))
+        XCTAssertNil(netrc.authorization(for: "http://example2.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "http://www.example2.com/resource.zip"))
     }
 
     /// should load machines for a given multi-line format
@@ -52,11 +49,11 @@ class NetrcTests: XCTestCase {
         XCTAssertEqual(machine?.login, "anonymous")
         XCTAssertEqual(machine?.password, "qwerty")
 
-        let authorization = netrc.authorization(for: URL(string: "http://example.com/resource.zip")!)
+        let authorization = netrc.authorization(for: "http://example.com/resource.zip")
         XCTAssertEqual(authorization, Netrc.Authorization(login: "anonymous", password: "qwerty"))
 
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://example2.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://www.example2.com/resource.zip")!))
+        XCTAssertNil(netrc.authorization(for: "http://example2.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "http://www.example2.com/resource.zip"))
     }
 
     /// Should fall back to default machine when not matching host
@@ -84,7 +81,7 @@ class NetrcTests: XCTestCase {
         XCTAssertEqual(machine2?.login, "id")
         XCTAssertEqual(machine2?.password, "secret")
 
-        let authorization = netrc.authorization(for: URL(string: "http://example2.com/resource.zip")!)
+        let authorization = netrc.authorization(for: "http://example2.com/resource.zip")
         XCTAssertEqual(authorization, Netrc.Authorization(login: "id", password: "secret"))
     }
 
@@ -126,7 +123,7 @@ class NetrcTests: XCTestCase {
         XCTAssertEqual(netrc.machines[2].login, "id")
         XCTAssertEqual(netrc.machines[2].password, "secret")
 
-        let authorization = netrc.authorization(for: URL(string: "http://example2.com/resource.zip")!)
+        let authorization = netrc.authorization(for: "http://example2.com/resource.zip")
         XCTAssertEqual(authorization, Netrc.Authorization(login: "id", password: "secret"))
     }
 
@@ -279,7 +276,7 @@ class NetrcTests: XCTestCase {
     func testEmptyMachineValueFollowedByDefaultNoError() throws {
         let content = "machine default login id password secret"
         let netrc = try NetrcParser.parse(content)
-        let authorization = netrc.authorization(for: URL(string: "http://example.com/resource.zip")!)
+        let authorization = netrc.authorization(for: "http://example.com/resource.zip")
         XCTAssertEqual(authorization, Netrc.Authorization(login: "id", password: "secret"))
     }
 
@@ -288,17 +285,17 @@ class NetrcTests: XCTestCase {
         let content = "machine example.com login anonymous password qwerty"
 
         let netrc = try NetrcParser.parse(content)
-        let authorization = netrc.authorization(for: URL(string: "http://example.com/resource.zip")!)
+        let authorization = netrc.authorization(for: "http://example.com/resource.zip")
         XCTAssertEqual(authorization, Netrc.Authorization(login: "anonymous", password: "qwerty"))
     }
 
     func testReturnNoAuthorizationForUnmatched() throws {
         let content = "machine example.com login anonymous password qwerty"
         let netrc = try NetrcParser.parse(content)
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://www.example.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "ftp.example.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://example2.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://www.example2.com/resource.zip")!))
+        XCTAssertNil(netrc.authorization(for: "http://www.example.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "ftp.example.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "http://example2.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "http://www.example2.com/resource.zip"))
     }
 
     /// should not return authorization when config does not contain a given machine
@@ -306,11 +303,11 @@ class NetrcTests: XCTestCase {
         let content = "machine example.com login anonymous password qwerty"
 
         let netrc = try NetrcParser.parse(content)
-        XCTAssertNil(netrc.authorization(for: URL(string: "https://example99.com")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://www.example.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "ftp.example.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://example2.com/resource.zip")!))
-        XCTAssertNil(netrc.authorization(for: URL(string: "http://www.example2.com/resource.zip")!))
+        XCTAssertNil(netrc.authorization(for: "https://example99.com"))
+        XCTAssertNil(netrc.authorization(for: "http://www.example.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "ftp.example.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "http://example2.com/resource.zip"))
+        XCTAssertNil(netrc.authorization(for: "http://www.example2.com/resource.zip"))
     }
 
     /// Test case: https://www.ibm.com/support/knowledgecenter/en/ssw_aix_72/filesreference/netrc.html
@@ -434,5 +431,84 @@ class NetrcTests: XCTestCase {
         XCTAssertEqual(netrc.machines[1].login, "fred")
         XCTAssertEqual(netrc.machines[1].password, "sunshine4ever")
     }
-}
 
+    func testComments() throws {
+        let content = """
+            # A comment at the beginning of the line
+            machine example.com # Another comment
+            login anonymous  # Another comment
+            password qw#erty  # Another comment
+            """
+
+        let netrc = try NetrcParser.parse(content)
+
+        let machine = netrc.machines.first
+        XCTAssertEqual(machine?.name, "example.com")
+        XCTAssertEqual(machine?.login, "anonymous")
+        XCTAssertEqual(machine?.password, "qw#erty")
+    }
+
+    // TODO: These permutation tests would be excellent swift-testing parameterized tests.
+    func testAllHashQuotingPermutations() throws {
+        let cases = [
+            ("qwerty", "qwerty"),
+            ("qwe#rty", "qwe#rty"),
+            ("\"qwe#rty\"", "qwe#rty"),
+            ("\"qwe #rty\"", "qwe #rty"),
+            ("\"qwe# rty\"", "qwe# rty"),
+        ]
+
+        for (testCase, expected) in cases {
+            let content = """
+                machine example.com
+                login \(testCase)
+                password \(testCase)
+                """
+            let netrc = try NetrcParser.parse(content)
+
+            let machine = netrc.machines.first
+            XCTAssertEqual(machine?.name, "example.com")
+            XCTAssertEqual(machine?.login, expected, "Expected login \(testCase) to parse as \(expected)")
+            XCTAssertEqual(machine?.password, expected, "Expected \(testCase) to parse as \(expected)")
+        }
+    }
+
+    func testAllCommentPermutations() throws {
+        let cases = [
+            ("qwerty   # a comment", "qwerty"),
+            ("qwe#rty   # a comment", "qwe#rty"),
+            ("\"qwe#rty\"   # a comment", "qwe#rty"),
+            ("\"qwe #rty\"   # a comment", "qwe #rty"),
+            ("\"qwe# rty\"   # a comment", "qwe# rty"),
+        ]
+
+        for (testCase, expected) in cases {
+            let content = """
+                machine example.com
+                login \(testCase)
+                password \(testCase)
+                """
+            let netrc = try NetrcParser.parse(content)
+
+            let machine = netrc.machines.first
+            XCTAssertEqual(machine?.name, "example.com")
+            XCTAssertEqual(machine?.login, expected, "Expected login \(testCase) to parse as \(expected)")
+            XCTAssertEqual(machine?.password, expected, "Expected password \(testCase) to parse as \(expected)")
+        }
+    }
+
+    func testQuotedMachine() throws {
+        let content = """
+            machine "example.com"
+            login anonymous
+            password qwerty
+            """
+
+        let netrc = try NetrcParser.parse(content)
+
+        let machine = netrc.machines.first
+        XCTAssertEqual(machine?.name, "example.com")
+        XCTAssertEqual(machine?.login, "anonymous")
+        XCTAssertEqual(machine?.password, "qwerty")
+    }
+}

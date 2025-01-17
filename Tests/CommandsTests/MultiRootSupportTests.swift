@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2019 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -12,21 +12,19 @@
 
 import Basics
 import Commands
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import Workspace
 import XCTest
 
 final class MultiRootSupportTests: CommandsTestCase {
-
     func testWorkspaceLoader() throws {
         let fs = InMemoryFileSystem(emptyFiles: [
             "/tmp/test/dep/Package.swift",
             "/tmp/test/local/Package.swift",
         ])
         let path = AbsolutePath("/tmp/test/Workspace.xcworkspace")
-        try fs.writeFileContents(path.appending(component: "contents.xcworkspacedata")) {
-            $0 <<< """
+        try fs.writeFileContents(path.appending("contents.xcworkspacedata"), string:
+                """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <Workspace
                 version = "1.0">
@@ -38,7 +36,7 @@ final class MultiRootSupportTests: CommandsTestCase {
                 </FileRef>
                 </Workspace>
                 """
-        }
+        )
 
         let observability = ObservabilitySystem.makeForTesting()
         let result = try XcodeWorkspaceLoader(fileSystem: fs, observabilityScope: observability.topScope).load(workspace: path)

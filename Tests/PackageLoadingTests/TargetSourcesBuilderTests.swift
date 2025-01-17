@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2019 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -14,11 +14,10 @@ import Basics
 import Foundation
 import PackageModel
 import PackageLoading
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
-class TargetSourcesBuilderTests: XCTestCase {
+final class TargetSourcesBuilderTests: XCTestCase {
     func testBasicFileContentsComputation() throws {
         let target = try TargetDescription(
             name: "Foo",
@@ -33,7 +32,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/Foo.swift",
             "/Bar.swift",
             "/some/path.swift",
@@ -62,13 +61,13 @@ class TargetSourcesBuilderTests: XCTestCase {
         let contents = builder.computeContents().sorted()
 
         XCTAssertEqual(contents, [
-            AbsolutePath("/Bar.swift"),
-            AbsolutePath("/Foo.swift"),
-            AbsolutePath("/Hello.something/hello.txt"),
-            AbsolutePath("/file"),
-            AbsolutePath("/path/to/somefile.txt"),
-            AbsolutePath("/some/path.swift"),
-            AbsolutePath("/some/path/toBeCopied"),
+            "/Bar.swift",
+            "/Foo.swift",
+            "/Hello.something/hello.txt",
+            "/file",
+            "/path/to/somefile.txt",
+            "/some/path.swift",
+            "/some/path/toBeCopied",
         ])
 
         XCTAssertNoDiagnostics(observability.diagnostics)
@@ -85,7 +84,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/some/hello.swift",
             "/some.thing/hello.txt",
         ])
@@ -106,8 +105,8 @@ class TargetSourcesBuilderTests: XCTestCase {
         let contents = builder.computeContents().sorted()
 
         XCTAssertEqual(contents, [
-            AbsolutePath("/some.thing"),
-            AbsolutePath("/some/hello.swift"),
+            "/some.thing",
+            "/some/hello.swift",
         ])
 
         XCTAssertNoDiagnostics(observability.diagnostics)
@@ -124,7 +123,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/some/hello.swift",
             "/some.thing/hello.txt",
         ])
@@ -145,8 +144,8 @@ class TargetSourcesBuilderTests: XCTestCase {
         let contents = builder.computeContents().sorted()
 
         XCTAssertEqual(contents, [
-            AbsolutePath("/some.thing/hello.txt"),
-            AbsolutePath("/some/hello.swift"),
+            "/some.thing/hello.txt",
+            "/some/hello.swift",
         ])
 
         XCTAssertNoDiagnostics(observability.diagnostics)
@@ -165,7 +164,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             root.appending(components: "some.xcassets", "hello.txt").pathString,
             root.appending(components: "some", "hello.swift").pathString
         ])
@@ -208,7 +207,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/Foo.swift",
             "/Bar.swift",
             "/some/path.swift",
@@ -243,14 +242,14 @@ class TargetSourcesBuilderTests: XCTestCase {
             type: .regular
         )
 
-        let files = [
-            AbsolutePath("/Foo.swift").pathString,
-            AbsolutePath("/Bar.swift").pathString,
-            AbsolutePath("/Baz.something").pathString,
+        let files: [AbsolutePath] = [
+            "/Foo.swift",
+            "/Bar.swift",
+            "/Baz.something",
         ]
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: files)
+        fs.createEmptyFiles(at: AbsolutePath.root, files: files.map(\.pathString))
 
         let somethingRule = FileRuleDescription(
             rule: .compile,
@@ -261,7 +260,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         build(target: target, additionalFileRules: [somethingRule], toolsVersion: .v5_5, fs: fs) { sources, _, _, _, _, _, _, diagnostics in
             XCTAssertNoDiagnostics(diagnostics)
             XCTAssertEqual(
-                sources.paths.map(\.pathString).sorted(),
+                sources.paths.sorted(),
                 files.sorted()
             )
         }
@@ -290,7 +289,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     for diagnostic in diagnosticsFound {
                         XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                         XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                        XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                        XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                     }
                 }
             }
@@ -319,7 +318,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     for diagnostic in diagnosticsFound {
                         XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                         XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                        XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                        XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                     }
                 }
             }
@@ -366,7 +365,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     for diagnostic in diagnosticsFound {
                         XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                         XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                        XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                        XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                     }
                 }
             }
@@ -395,7 +394,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     for diagnostic in diagnosticsFound {
                         XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                         XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                        XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                        XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                     }
                 }
             }
@@ -422,7 +421,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     )
                     XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                     XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                    XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                    XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                 }
             }
         }
@@ -460,7 +459,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                 )
                 XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                 XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
             }
         }
     }
@@ -485,7 +484,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                 )
                 XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                 XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
             }
         }
     }
@@ -563,7 +562,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                 for diagnostic in diagnosticsFound {
                     XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                     XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                    XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                    XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                 }
             }
         }
@@ -591,15 +590,15 @@ class TargetSourcesBuilderTests: XCTestCase {
 
         build(target: target, defaultLocalization: "fr", toolsVersion: .v5_3, fs: fs) { _, resources, _,  _, _, _, _, diagnostics in
             XCTAssertEqual(resources.sorted(by: { $0.path < $1.path }), [
-                Resource(rule: .process(localization: .none), path: AbsolutePath("/Processed/foo.txt")),
-                Resource(rule: .process(localization: "en-us"), path: AbsolutePath("/Processed/En-uS.lproj/Localizable.stringsdict")),
-                Resource(rule: .process(localization: "en-us"), path: AbsolutePath("/Processed/en-US.lproj/Localizable.strings")),
-                Resource(rule: .process(localization: "fr"), path: AbsolutePath("/Processed/fr.lproj/Localizable.strings")),
-                Resource(rule: .process(localization: "fr"), path: AbsolutePath("/Processed/fr.lproj/Localizable.stringsdict")),
-                Resource(rule: .process(localization: "Base"), path: AbsolutePath("/Processed/Base.lproj/Storyboard.storyboard")),
-                Resource(rule: .copy, path: AbsolutePath("/Copied")),
-                Resource(rule: .process(localization: "Base"), path: AbsolutePath("/Other/Launch.storyboard")),
-                Resource(rule: .process(localization: "fr"), path: AbsolutePath("/Other/Image.png")),
+                Resource(rule: .process(localization: .none), path: "/Processed/foo.txt"),
+                Resource(rule: .process(localization: "en-us"), path: "/Processed/En-uS.lproj/Localizable.stringsdict"),
+                Resource(rule: .process(localization: "en-us"), path: "/Processed/en-US.lproj/Localizable.strings"),
+                Resource(rule: .process(localization: "fr"), path: "/Processed/fr.lproj/Localizable.strings"),
+                Resource(rule: .process(localization: "fr"), path: "/Processed/fr.lproj/Localizable.stringsdict"),
+                Resource(rule: .process(localization: "Base"), path: "/Processed/Base.lproj/Storyboard.storyboard"),
+                Resource(rule: .copy, path: "/Copied"),
+                Resource(rule: .process(localization: "Base"), path: "/Other/Launch.storyboard"),
+                Resource(rule: .process(localization: "fr"), path: "/Other/Image.png"),
             ].sorted(by: { $0.path < $1.path }))
         }
     }
@@ -612,8 +611,8 @@ class TargetSourcesBuilderTests: XCTestCase {
 
         build(target: try TargetDescription(name: "Foo"), defaultLocalization: "fr", toolsVersion: .v5_3, fs: fs) { _, resources, _, _, _, _, _, diagnostics in
             XCTAssertEqual(resources.sorted(by: { $0.path < $1.path }), [
-                Resource(rule: .process(localization: "fr"), path: AbsolutePath("/Foo/fr.lproj/Image.png")),
-                Resource(rule: .process(localization: "es"), path: AbsolutePath("/Foo/es.lproj/Image.png")),
+                Resource(rule: .process(localization: "fr"), path: "/Foo/fr.lproj/Image.png"),
+                Resource(rule: .process(localization: "es"), path: "/Foo/es.lproj/Image.png"),
             ].sorted(by: { $0.path < $1.path }))
         }
     }
@@ -636,7 +635,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     )
                     XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                     XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                    XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                    XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                 }
             }
         }
@@ -658,7 +657,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                     )
                     XCTAssertEqual(diagnostic?.metadata?.packageIdentity, identity)
                     XCTAssertEqual(diagnostic?.metadata?.packageKind, kind)
-                    XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                    XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                 }
             }
         }
@@ -676,7 +675,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/Foo.swift",
             "/Bar.swift"
         ])
@@ -687,8 +686,8 @@ class TargetSourcesBuilderTests: XCTestCase {
 
             let builder = TargetSourcesBuilder(
                 packageIdentity: .plain("test"),
-                packageKind: .root(.init("/test")),
-                packagePath: .init("/test"),
+                packageKind: .root("/test"),
+                packagePath: "/test",
                 target: target,
                 path: .root,
                 toolsVersion: .v5,
@@ -705,7 +704,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                 for diagnostic in diagnosticsFound {
                     XCTAssertEqual(diagnostic?.metadata?.packageIdentity, builder.packageIdentity)
                     XCTAssertEqual(diagnostic?.metadata?.packageKind, builder.packageKind)
-                    XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                    XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                 }
             }
         }
@@ -717,8 +716,8 @@ class TargetSourcesBuilderTests: XCTestCase {
 
             let builder = TargetSourcesBuilder(
                 packageIdentity: .plain("test"),
-                packageKind: .remoteSourceControl(URL(string: "https://some.where/foo/bar")!),
-                packagePath: .init("/test"),
+                packageKind: .remoteSourceControl(SourceControlURL("https://some.where/foo/bar")),
+                packagePath: "/test",
                 target: target,
                 path: .root,
                 toolsVersion: .v5,
@@ -744,7 +743,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/Foo.swift",
             "/Bar.swift"
         ])
@@ -772,7 +771,7 @@ class TargetSourcesBuilderTests: XCTestCase {
                 for diagnostic in diagnosticsFound {
                     XCTAssertEqual(diagnostic?.metadata?.packageIdentity, builder.packageIdentity)
                     XCTAssertEqual(diagnostic?.metadata?.packageKind, builder.packageKind)
-                    XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                    XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
                 }
             }
         }
@@ -784,7 +783,7 @@ class TargetSourcesBuilderTests: XCTestCase {
 
             let builder = TargetSourcesBuilder(
                 packageIdentity: .plain("test"),
-                packageKind: .remoteSourceControl(URL(string: "https://some.where/foo/bar")!),
+                packageKind: .remoteSourceControl(SourceControlURL("https://some.where/foo/bar")),
                 packagePath: .root,
                 target: target,
                 path: .root,
@@ -813,7 +812,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/Foo.swift",
             "/Bar.swift"
         ])
@@ -822,7 +821,7 @@ class TargetSourcesBuilderTests: XCTestCase {
 
         let builder = TargetSourcesBuilder(
             packageIdentity: .plain("test"),
-            packageKind: .root(.init("/test")),
+            packageKind: .root("/test"),
             packagePath: .root,
             target: target,
             path: .root,
@@ -840,7 +839,7 @@ class TargetSourcesBuilderTests: XCTestCase {
             for diagnostic in diagnosticsFound {
                 XCTAssertEqual(diagnostic?.metadata?.packageIdentity, builder.packageIdentity)
                 XCTAssertEqual(diagnostic?.metadata?.packageKind, builder.packageKind)
-                XCTAssertEqual(diagnostic?.metadata?.targetName, target.name)
+                XCTAssertEqual(diagnostic?.metadata?.moduleName, target.name)
             }
         }
     }
@@ -857,7 +856,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/File.swift",
             "/Foo.xcdatamodel"
         ])
@@ -866,7 +865,7 @@ class TargetSourcesBuilderTests: XCTestCase {
 
         let builder = TargetSourcesBuilder(
             packageIdentity: .plain("test"),
-            packageKind: .root(.init("/test")),
+            packageKind: .root( "/test"),
             packagePath: .root,
             target: target,
             path: .root,
@@ -875,10 +874,10 @@ class TargetSourcesBuilderTests: XCTestCase {
             observabilityScope: observability.topScope
         )
         let outputs = try builder.run()
-        XCTAssertEqual(outputs.sources.paths, [AbsolutePath("/File.swift")])
+        XCTAssertEqual(outputs.sources.paths, ["/File.swift"])
         XCTAssertEqual(outputs.resources, [])
         XCTAssertEqual(outputs.ignored, [])
-        XCTAssertEqual(outputs.others, [AbsolutePath("/Foo.xcdatamodel")])
+        XCTAssertEqual(outputs.others, ["/Foo.xcdatamodel"])
 
         XCTAssertFalse(observability.hasWarningDiagnostics)
         XCTAssertFalse(observability.hasErrorDiagnostics)
@@ -896,7 +895,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/File.swift",
             "/foo.bar"
         ])
@@ -906,7 +905,7 @@ class TargetSourcesBuilderTests: XCTestCase {
 
             let builder = TargetSourcesBuilder(
                 packageIdentity: .plain("test"),
-                packageKind: .root(.init("/test")),
+                packageKind: .root("/test"),
                 packagePath: .root,
                 target: target,
                 path: .root,
@@ -915,10 +914,10 @@ class TargetSourcesBuilderTests: XCTestCase {
                 observabilityScope: observability.topScope
             )
             let outputs = try builder.run()
-            XCTAssertEqual(outputs.sources.paths, [AbsolutePath("/File.swift")])
+            XCTAssertEqual(outputs.sources.paths, ["/File.swift"])
             XCTAssertEqual(outputs.resources, [])
             XCTAssertEqual(outputs.ignored, [])
-            XCTAssertEqual(outputs.others, [AbsolutePath("/foo.bar")])
+            XCTAssertEqual(outputs.others, ["/foo.bar"])
 
             XCTAssertFalse(observability.hasWarningDiagnostics)
             XCTAssertFalse(observability.hasErrorDiagnostics)
@@ -931,7 +930,7 @@ class TargetSourcesBuilderTests: XCTestCase {
 
             let builder = TargetSourcesBuilder(
                 packageIdentity: .plain("test"),
-                packageKind: .remoteSourceControl(URL(string: "https://some.where/foo/bar")!),
+                packageKind: .remoteSourceControl(SourceControlURL("https://some.where/foo/bar")),
                 packagePath: .root,
                 target: target,
                 path: .root,
@@ -957,7 +956,7 @@ class TargetSourcesBuilderTests: XCTestCase {
         )
 
         let fs = InMemoryFileSystem()
-        fs.createEmptyFiles(at: .root, files: [
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
             "/File.swift",
             "/Foo.docc"
         ])
@@ -977,9 +976,59 @@ class TargetSourcesBuilderTests: XCTestCase {
             observabilityScope: observability.topScope
         )
         let outputs = try builder.run()
-        XCTAssertEqual(outputs.sources.paths, [AbsolutePath("/File.swift")])
+        XCTAssertEqual(outputs.sources.paths, ["/File.swift"])
         XCTAssertEqual(outputs.resources, [])
-        XCTAssertEqual(outputs.ignored, [AbsolutePath("/Foo.docc")])
+        XCTAssertEqual(outputs.ignored, ["/Foo.docc"])
+        XCTAssertEqual(outputs.others, [])
+
+        XCTAssertNoDiagnostics(observability.diagnostics)
+    }
+
+    func testResourcesAreSorted() throws {
+        let target = try TargetDescription(
+            name: "Foo",
+            path: nil,
+            exclude: [],
+            sources: ["File.swift"],
+            resources: [
+                .init(rule: .copy, path: "a.txt"),
+                .init(rule: .copy, path: "c.txt"),
+                .init(rule: .copy, path: "b.txt"),
+            ],
+            publicHeadersPath: nil,
+            type: .regular
+        )
+
+        let fs = InMemoryFileSystem()
+        fs.createEmptyFiles(at: AbsolutePath.root, files: [
+            "/File.swift",
+            "/a.txt",
+            "/b.txt",
+            "/c.txt",
+        ])
+
+        let observability = ObservabilitySystem.makeForTesting()
+
+        let builder = TargetSourcesBuilder(
+            packageIdentity: .plain("test"),
+            packageKind: .root(.root),
+            packagePath: .root,
+            target: target,
+            path: .root,
+            defaultLocalization: nil,
+            additionalFileRules: FileRuleDescription.swiftpmFileTypes,
+            toolsVersion: .v5_5,
+            fileSystem: fs,
+            observabilityScope: observability.topScope
+        )
+        let outputs = try builder.run()
+        XCTAssertEqual(outputs.sources.paths, ["/File.swift"])
+        XCTAssertEqual(outputs.resources, [
+            .init(rule: .copy, path: try .init(validating: "/a.txt")),
+            .init(rule: .copy, path: try .init(validating: "/b.txt")),
+            .init(rule: .copy, path: try .init(validating: "/c.txt")),
+        ])
+        XCTAssertEqual(outputs.ignored, [])
         XCTAssertEqual(outputs.others, [])
 
         XCTAssertNoDiagnostics(observability.diagnostics)

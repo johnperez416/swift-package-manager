@@ -12,24 +12,25 @@
 
 import XCTest
 import Basics
-import TSCBasic
 import PackageModel
 import SPMBuildCore
 import XCBuildSupport
-import SPMTestSupport
+import _InternalTestSupport
+
+import enum TSCBasic.JSON
 
 class PIFTests: XCTestCase {
     let topLevelObject = PIF.TopLevelObject(workspace:
         PIF.Workspace(
             guid: "workspace",
             name: "MyWorkspace",
-            path: AbsolutePath("/path/to/workspace"),
+            path: "/path/to/workspace",
             projects: [
                 PIF.Project(
                     guid: "project",
                     name: "MyProject",
-                    path: AbsolutePath("/path/to/workspace/project"),
-                    projectDirectory: AbsolutePath("/path/to/workspace/project"),
+                    path: "/path/to/workspace/project",
+                    projectDirectory: "/path/to/workspace/project",
                     developmentRegion: "fr",
                     buildConfigurations: [
                         PIF.BuildConfiguration(
@@ -67,7 +68,6 @@ class PIFTests: XCTestCase {
                                     buildSettings: {
                                         var settings = PIF.BuildSettings()
                                         settings[.TARGET_NAME] = "MyExecutable"
-                                        settings[.EXECUTABLE_NAME] = "my-exe"
                                         return settings
                                     }()
                                 ),
@@ -77,7 +77,6 @@ class PIFTests: XCTestCase {
                                     buildSettings: {
                                         var settings = PIF.BuildSettings()
                                         settings[.TARGET_NAME] = "MyExecutable"
-                                        settings[.EXECUTABLE_NAME] = "my-exe"
                                         settings[.SKIP_INSTALL] = "NO"
                                         return settings
                                     }()
@@ -103,6 +102,17 @@ class PIFTests: XCTestCase {
                                             platformFilters: []
                                         )
                                     ]
+                                ),
+                                PIF.HeadersBuildPhase(
+                                    guid: "target-exe-headers-build-phase-guid",
+                                    buildFiles: [
+                                        PIF.BuildFile(
+                                            guid: "target-exe-headers-build-file-guid",
+                                            targetGUID: "target-lib-guid",
+                                            platformFilters: [],
+                                            headerVisibility: .public
+                                        )
+                                    ]
                                 )
                             ],
                             dependencies: [
@@ -123,6 +133,11 @@ class PIFTests: XCTestCase {
                                         var settings = PIF.BuildSettings()
                                         settings[.TARGET_NAME] = "MyLibrary-Debug"
                                         return settings
+                                    }(),
+                                    impartedBuildProperties: {
+                                        var settings = PIF.BuildSettings()
+                                        settings[.OTHER_CFLAGS] = ["-fmodule-map-file=modulemap", "$(inherited)"]
+                                        return PIF.ImpartedBuildProperties(settings: settings)
                                     }()
                                 ),
                                 PIF.BuildConfiguration(
@@ -132,6 +147,11 @@ class PIFTests: XCTestCase {
                                         var settings = PIF.BuildSettings()
                                         settings[.TARGET_NAME] = "MyLibrary"
                                         return settings
+                                    }(),
+                                    impartedBuildProperties: {
+                                        var settings = PIF.BuildSettings()
+                                        settings[.OTHER_CFLAGS] = ["-fmodule-map-file=modulemap", "$(inherited)"]
+                                        return PIF.ImpartedBuildProperties(settings: settings)
                                     }()
                                 ),
                             ],
@@ -148,11 +168,7 @@ class PIFTests: XCTestCase {
                                 )
                             ],
                             dependencies: [],
-                            impartedBuildSettings: {
-                                var settings = PIF.BuildSettings()
-                                settings[.OTHER_CFLAGS] = ["-fmodule-map-file=modulemap", "$(inherited)"]
-                                return settings
-                            }()
+                            impartedBuildSettings: PIF.BuildSettings()
                         ),
                         PIF.AggregateTarget(
                             guid: "aggregate-target-guid",
@@ -161,12 +177,22 @@ class PIFTests: XCTestCase {
                                 PIF.BuildConfiguration(
                                     guid: "aggregate-target-config-debug-guid",
                                     name: "Debug",
-                                    buildSettings: PIF.BuildSettings()
+                                    buildSettings: PIF.BuildSettings(),
+                                    impartedBuildProperties: {
+                                        var settings = PIF.BuildSettings()
+                                        settings[.OTHER_CFLAGS] = ["-fmodule-map-file=modulemap", "$(inherited)"]
+                                        return PIF.ImpartedBuildProperties(settings: settings)
+                                    }()
                                 ),
                                 PIF.BuildConfiguration(
                                     guid: "aggregate-target-config-release-guid",
                                     name: "Release",
-                                    buildSettings: PIF.BuildSettings()
+                                    buildSettings: PIF.BuildSettings(),
+                                    impartedBuildProperties: {
+                                        var settings = PIF.BuildSettings()
+                                        settings[.OTHER_CFLAGS] = ["-fmodule-map-file=modulemap", "$(inherited)"]
+                                        return PIF.ImpartedBuildProperties(settings: settings)
+                                    }()
                                 ),
                             ],
                             buildPhases: [],
@@ -174,11 +200,7 @@ class PIFTests: XCTestCase {
                                 .init(targetGUID: "target-lib-guid"),
                                 .init(targetGUID: "target-exe-guid"),
                             ],
-                            impartedBuildSettings: {
-                                var settings = PIF.BuildSettings()
-                                settings[.OTHER_CFLAGS] = ["-fmodule-map-file=modulemap", "$(inherited)"]
-                                return settings
-                            }()
+                            impartedBuildSettings: PIF.BuildSettings()
                         )
                     ],
                     groupTree: PIF.Group(guid: "main-group-guid", path: "", children: [
@@ -191,10 +213,6 @@ class PIFTests: XCTestCase {
     )
 
     func testRoundTrip() throws {
-        // FIXME: Disabled because we need to store build settings in
-        // sorted dictionary in order to get deterministic output
-        // when encoding (SR-12587).
-      #if false
         let encoder = JSONEncoder.makeWithDefaults()
         if #available(macOS 10.13, *) {
             encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
@@ -207,11 +225,10 @@ class PIFTests: XCTestCase {
         let originalPIF = try encoder.encode(workspace)
         let decodedPIF = try encoder.encode(decodedWorkspace)
 
-        let originalString = String(data: originalPIF, encoding: .utf8)!
-        let decodedString = String(data: decodedPIF, encoding: .utf8)!
+        let originalString = String(decoding: originalPIF, as: UTF8.self)
+        let decodedString = String(decoding: decodedPIF, as: UTF8.self)
 
         XCTAssertEqual(originalString, decodedString)
-      #endif
     }
 
     func testEncodable() throws {
@@ -331,7 +348,6 @@ class PIFTests: XCTestCase {
         XCTAssertEqual(exeTargetContents["type"]?.string, "standard")
         XCTAssertEqual(exeTargetContents["productTypeIdentifier"]?.string, "com.apple.product-type.tool")
         XCTAssertEqual(exeTargetContents["buildRules"]?.array, [])
-        XCTAssertEqual(exeTargetContents["impartedBuildProperties"]?.dictionary, ["buildSettings": JSON([:])])
 
         XCTAssertEqual(exeTargetContents["productReference"], JSON([
             "type": "file",
@@ -345,20 +361,20 @@ class PIFTests: XCTestCase {
             XCTAssertEqual(debugConfiguration["name"]?.string, "Debug")
             let debugSettings = debugConfiguration["buildSettings"]
             XCTAssertEqual(debugSettings?["TARGET_NAME"]?.string, "MyExecutable")
-            XCTAssertEqual(debugSettings?["EXECUTABLE_NAME"]?.string, "my-exe")
+            XCTAssertEqual(debugConfiguration["impartedBuildProperties"]?.dictionary, ["buildSettings": JSON([:])])
 
             let releaseConfiguration = configurations[1]
             XCTAssertEqual(releaseConfiguration["guid"]?.string, "target-exe-config-release-guid")
             XCTAssertEqual(releaseConfiguration["name"]?.string, "Release")
             let releaseSettings = releaseConfiguration["buildSettings"]
             XCTAssertEqual(releaseSettings?["TARGET_NAME"]?.string, "MyExecutable")
-            XCTAssertEqual(releaseSettings?["EXECUTABLE_NAME"]?.string, "my-exe")
             XCTAssertEqual(releaseSettings?["SKIP_INSTALL"]?.string, "NO")
+            XCTAssertEqual(releaseConfiguration["impartedBuildProperties"]?.dictionary, ["buildSettings": JSON([:])])
         } else {
             XCTFail("invalid number of build configurations")
         }
 
-        if let buildPhases = exeTargetContents["buildPhases"]?.array, buildPhases.count == 2 {
+        if let buildPhases = exeTargetContents["buildPhases"]?.array, buildPhases.count == 3 {
             let buildPhase1 = buildPhases[0]
             XCTAssertEqual(buildPhase1["guid"]?.string, "target-exe-sources-build-phase-guid")
             XCTAssertEqual(buildPhase1["type"]?.string, "com.apple.buildphase.sources")
@@ -375,6 +391,17 @@ class PIFTests: XCTestCase {
             if let frameworks = buildPhase2["buildFiles"]?.array, frameworks.count == 1 {
                 XCTAssertEqual(frameworks[0]["guid"]?.string, "target-exe-frameworks-build-file-guid")
                 XCTAssertEqual(frameworks[0]["targetReference"]?.string, "target-lib-guid@11")
+            } else {
+                XCTFail("invalid number of build files")
+            }
+
+            let buildPhase3 = buildPhases[2]
+            XCTAssertEqual(buildPhase3["guid"]?.string, "target-exe-headers-build-phase-guid")
+            XCTAssertEqual(buildPhase3["type"]?.string, "com.apple.buildphase.headers")
+            if let frameworks = buildPhase3["buildFiles"]?.array, frameworks.count == 1 {
+                XCTAssertEqual(frameworks[0]["guid"]?.string, "target-exe-headers-build-file-guid")
+                XCTAssertEqual(frameworks[0]["targetReference"]?.string, "target-lib-guid@11")
+                XCTAssertEqual(frameworks[0]["headerVisibility"]?.string, "public")
             } else {
                 XCTFail("invalid number of build files")
             }
@@ -396,23 +423,26 @@ class PIFTests: XCTestCase {
             "name": "MyLibrary"
         ]))
 
-        XCTAssertEqual(
-            libTargetContents["impartedBuildProperties"]?["buildSettings"]?["OTHER_CFLAGS"]?.array,
-            [.string("-fmodule-map-file=modulemap"), .string("$(inherited)")]
-        )
-
         if let configurations = libTargetContents["buildConfigurations"]?.array, configurations.count == 2 {
             let debugConfiguration = configurations[0]
             XCTAssertEqual(debugConfiguration["guid"]?.string, "target-lib-config-debug-guid")
             XCTAssertEqual(debugConfiguration["name"]?.string, "Debug")
             let debugSettings = debugConfiguration["buildSettings"]
             XCTAssertEqual(debugSettings?["TARGET_NAME"]?.string, "MyLibrary-Debug")
+            XCTAssertEqual(
+                debugConfiguration["impartedBuildProperties"]?["buildSettings"]?["OTHER_CFLAGS"]?.array,
+                [.string("-fmodule-map-file=modulemap"), .string("$(inherited)")]
+            )
 
             let releaseConfiguration = configurations[1]
             XCTAssertEqual(releaseConfiguration["guid"]?.string, "target-lib-config-release-guid")
             XCTAssertEqual(releaseConfiguration["name"]?.string, "Release")
             let releaseSettings = releaseConfiguration["buildSettings"]
             XCTAssertEqual(releaseSettings?["TARGET_NAME"]?.string, "MyLibrary")
+            XCTAssertEqual(
+                releaseConfiguration["impartedBuildProperties"]?["buildSettings"]?["OTHER_CFLAGS"]?.array,
+                [.string("-fmodule-map-file=modulemap"), .string("$(inherited)")]
+            )
         } else {
             XCTFail("invalid number of build configurations")
         }
@@ -441,23 +471,26 @@ class PIFTests: XCTestCase {
         ])
         XCTAssertEqual(aggregateTargetContents["buildRules"], nil)
 
-        XCTAssertEqual(
-            aggregateTargetContents["impartedBuildProperties"]?["buildSettings"]?["OTHER_CFLAGS"]?.array,
-            [.string("-fmodule-map-file=modulemap"), .string("$(inherited)")]
-        )
-
         if let configurations = aggregateTargetContents["buildConfigurations"]?.array, configurations.count == 2 {
             let debugConfiguration = configurations[0]
             XCTAssertEqual(debugConfiguration["guid"]?.string, "aggregate-target-config-debug-guid")
             XCTAssertEqual(debugConfiguration["name"]?.string, "Debug")
             let debugSettings = debugConfiguration["buildSettings"]
             XCTAssertNotNil(debugSettings)
+            XCTAssertEqual(
+                debugConfiguration["impartedBuildProperties"]?["buildSettings"]?["OTHER_CFLAGS"]?.array,
+                [.string("-fmodule-map-file=modulemap"), .string("$(inherited)")]
+            )
 
             let releaseConfiguration = configurations[1]
             XCTAssertEqual(releaseConfiguration["guid"]?.string, "aggregate-target-config-release-guid")
             XCTAssertEqual(releaseConfiguration["name"]?.string, "Release")
             let releaseSettings = releaseConfiguration["buildSettings"]
             XCTAssertNotNil(releaseSettings)
+            XCTAssertEqual(
+                releaseConfiguration["impartedBuildProperties"]?["buildSettings"]?["OTHER_CFLAGS"]?.array,
+                [.string("-fmodule-map-file=modulemap"), .string("$(inherited)")]
+            )
         } else {
             XCTFail("invalid number of build configurations")
         }

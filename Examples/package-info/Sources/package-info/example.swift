@@ -1,10 +1,4 @@
-#if swift(>=5.7)
-@preconcurrency import Basics
-@preconcurrency import TSCBasic
-#else
 import Basics
-import TSCBasic
-#endif
 import Workspace
 
 @main
@@ -16,7 +10,7 @@ struct Example {
 
         // We need a package to work with.
         // This computes the path of this package root based on the file location
-        let packagePath = AbsolutePath(#file).parentDirectory.parentDirectory.parentDirectory
+        let packagePath = try AbsolutePath(validating: #file).parentDirectory.parentDirectory.parentDirectory
 
         // LOADING
         // =======
@@ -32,8 +26,8 @@ struct Example {
 
         let package = try await workspace.loadRootPackage(at: packagePath, observabilityScope: observability.topScope)
 
-        let graph = try workspace.loadPackageGraph(rootPath: packagePath, observabilityScope: observability.topScope)
-        
+        let graph = try await workspace.loadPackageGraph(rootPath: packagePath, observabilityScope: observability.topScope)
+
         // EXAMPLES
         // ========
 
@@ -45,11 +39,11 @@ struct Example {
         print("Targets:", targets)
 
         // Package
-        let executables = package.targets.filter({ $0.type == .executable }).map({ $0.name })
+        let executables = package.modules.filter({ $0.type == .executable }).map({ $0.name })
         print("Executable targets:", executables)
 
         // PackageGraph
-        let numberOfFiles = graph.reachableTargets.reduce(0, { $0 + $1.sources.paths.count })
+        let numberOfFiles = graph.reachableModules.reduce(0, { $0 + $1.sources.paths.count })
         print("Total number of source files (including dependencies):", numberOfFiles)
     }
 }

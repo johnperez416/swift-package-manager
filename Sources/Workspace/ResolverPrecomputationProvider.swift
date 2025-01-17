@@ -15,7 +15,8 @@ import Dispatch
 import PackageGraph
 import PackageModel
 import SourceControl
-import TSCBasic
+
+import struct TSCUtility.Version
 
 /// Enumeration of the different errors that can arise from the `ResolverPrecomputationProvider` provider.
 enum ResolverPrecomputationError: Error {
@@ -55,7 +56,7 @@ struct ResolverPrecomputationProvider: PackageContainerProvider {
 
     func getContainer(
         for package: PackageReference,
-        skipUpdate: Bool,
+        updateStrategy: ContainerUpdateStrategy,
         observabilityScope: ObservabilityScope,
         on queue: DispatchQueue,
         completion: @escaping (Result<PackageContainer, Error>) -> Void
@@ -95,6 +96,7 @@ private struct LocalPackageContainer: PackageContainer {
     /// The managed dependency if the package is not a root package.
     let dependency: Workspace.ManagedDependency?
     let currentToolsVersion: ToolsVersion
+    let shouldInvalidatePinnedVersions = false
 
     func versionsAscending() throws -> [Version] {
         switch dependency?.state {
@@ -120,8 +122,8 @@ private struct LocalPackageContainer: PackageContainer {
         return currentToolsVersion
     }
 
-    func toolsVersionsAppropriateVersionsDescending() throws -> [Version] {
-        return try self.versionsDescending()
+    func toolsVersionsAppropriateVersionsDescending() async throws -> [Version] {
+        try await self.versionsDescending()
     }
 
     func getDependencies(at version: Version, productFilter: ProductFilter) throws -> [PackageContainerConstraint] {

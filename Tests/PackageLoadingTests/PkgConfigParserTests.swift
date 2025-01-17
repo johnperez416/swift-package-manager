@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -12,9 +12,10 @@
 
 import Basics
 @testable import PackageLoading
-import TSCBasic
-import SPMTestSupport
+import _InternalTestSupport
 import XCTest
+
+import struct TSCBasic.ByteString
 
 final class PkgConfigParserTests: XCTestCase {
     func testCircularPCFile() throws {
@@ -63,6 +64,12 @@ final class PkgConfigParserTests: XCTestCase {
             XCTAssertEqual(parser.dependencies, ["gdk-3.0", "atk"])
             XCTAssertEqual(parser.cFlags, [])
             XCTAssertEqual(parser.libs, ["-L/usr/local/bin", "-lgtk-3"])
+        }
+    }
+
+    func testCFlagsCaseInsensitveKeys() {
+        try! loadPCFile("case_insensitive.pc") { parser in
+            XCTAssertEqual(parser.cFlags, ["-I/usr/local/include"])
         }
     }
 
@@ -131,27 +138,27 @@ final class PkgConfigParserTests: XCTestCase {
             "/usr/local/opt/foo/lib/pkgconfig/foo.pc",
             "/custom/foo.pc")
         XCTAssertEqual(
-            AbsolutePath("/custom/foo.pc"),
-            try PCFileFinder().locatePCFile(name: "foo", customSearchPaths: [AbsolutePath("/custom")], fileSystem: fs, observabilityScope: observability.topScope)
+            "/custom/foo.pc",
+            try PCFileFinder().locatePCFile(name: "foo", customSearchPaths: ["/custom"], fileSystem: fs, observabilityScope: observability.topScope)
         )
         XCTAssertEqual(
-            AbsolutePath("/custom/foo.pc"),
-            try PkgConfig(name: "foo", additionalSearchPaths: [AbsolutePath("/custom")], fileSystem: fs, observabilityScope: observability.topScope).pcFile
+            "/custom/foo.pc",
+            try PkgConfig(name: "foo", additionalSearchPaths: ["/custom"], fileSystem: fs, observabilityScope: observability.topScope).pcFile
         )
         XCTAssertEqual(
-            AbsolutePath("/usr/lib/pkgconfig/foo.pc"),
+            "/usr/lib/pkgconfig/foo.pc",
             try PCFileFinder().locatePCFile(name: "foo", customSearchPaths: [], fileSystem: fs, observabilityScope: observability.topScope)
         )
-        try withCustomEnv(["PKG_CONFIG_PATH": "/usr/local/opt/foo/lib/pkgconfig"]) {
-            XCTAssertEqual(AbsolutePath("/usr/local/opt/foo/lib/pkgconfig/foo.pc"), try PkgConfig(name: "foo", fileSystem: fs, observabilityScope: observability.topScope).pcFile)
+        try Environment.makeCustom(["PKG_CONFIG_PATH": "/usr/local/opt/foo/lib/pkgconfig"]) {
+            XCTAssertEqual("/usr/local/opt/foo/lib/pkgconfig/foo.pc", try PkgConfig(name: "foo", fileSystem: fs, observabilityScope: observability.topScope).pcFile)
         }
 #if os(Windows)
         let separator = ";"
 #else
         let separator = ":"
 #endif
-        try withCustomEnv(["PKG_CONFIG_PATH": "/usr/local/opt/foo/lib/pkgconfig\(separator)/usr/lib/pkgconfig"]) {
-            XCTAssertEqual(AbsolutePath("/usr/local/opt/foo/lib/pkgconfig/foo.pc"), try PkgConfig(name: "foo", fileSystem: fs, observabilityScope: observability.topScope).pcFile)
+        try Environment.makeCustom(["PKG_CONFIG_PATH": "/usr/local/opt/foo/lib/pkgconfig\(separator)/usr/lib/pkgconfig"]) {
+            XCTAssertEqual("/usr/local/opt/foo/lib/pkgconfig/foo.pc", try PkgConfig(name: "foo", fileSystem: fs, observabilityScope: observability.topScope).pcFile)
         }
     }
 
@@ -167,19 +174,18 @@ final class PkgConfigParserTests: XCTestCase {
 #endif
             try localFileSystem.createDirectory(fakePkgConfig.parentDirectory)
 
-            let stream = BufferedOutputByteStream()
 #if os(Windows)
-            stream <<< """
+            let script = """
             @echo off
             echo /Volumes/BestDrive/pkgconfig
             """
 #else
-            stream <<< """
+            let script = """
             #!/bin/sh
             echo "/Volumes/BestDrive/pkgconfig"
             """
 #endif
-            try localFileSystem.writeFileContents(fakePkgConfig, bytes: stream.bytes)
+            try localFileSystem.writeFileContents(fakePkgConfig, string: script)
             try localFileSystem.chmod(.executable, path: fakePkgConfig, options: [])
 
 #if os(Windows)
@@ -189,7 +195,7 @@ final class PkgConfigParserTests: XCTestCase {
 #endif
         }
 
-        XCTAssertEqual(PCFileFinder.pkgConfigPaths, [AbsolutePath("/Volumes/BestDrive/pkgconfig")])
+        XCTAssertEqual(PCFileFinder.pkgConfigPaths, ["/Volumes/BestDrive/pkgconfig"])
     }
 
     func testAbsolutePathDependency() throws {
@@ -218,8 +224,8 @@ final class PkgConfigParserTests: XCTestCase {
         XCTAssertNoThrow(
             try PkgConfig(
                 name: "gobject-2.0",
-                additionalSearchPaths: [AbsolutePath("/usr/local/opt/glib/lib/pkgconfig")],
-                brewPrefix: AbsolutePath("/usr/local"),
+                additionalSearchPaths: ["/usr/local/opt/glib/lib/pkgconfig"],
+                brewPrefix: "/usr/local",
                 fileSystem: fileSystem,
                 observabilityScope: observability.topScope
             )
@@ -235,12 +241,92 @@ final class PkgConfigParserTests: XCTestCase {
         }
     }
 
+    func testSysrootDir() throws {
+        // sysroot should be prepended to all path variables, and should therefore appear in cflags and libs.
+        try loadPCFile("gtk+-3.0.pc", sysrootDir: "/opt/sysroot/somewhere") { parser in
+            XCTAssertEqual(parser.variables, [
+                "libdir": "/opt/sysroot/somewhere/usr/local/Cellar/gtk+3/3.18.9/lib",
+                "gtk_host": "x86_64-apple-darwin15.3.0",
+                "includedir": "/opt/sysroot/somewhere/usr/local/Cellar/gtk+3/3.18.9/include",
+                "prefix": "/opt/sysroot/somewhere/usr/local/Cellar/gtk+3/3.18.9",
+                "gtk_binary_version": "3.0.0",
+                "exec_prefix": "/opt/sysroot/somewhere/usr/local/Cellar/gtk+3/3.18.9",
+                "targets": "quartz",
+                "pcfiledir": parser.pcFile.parentDirectory.pathString,
+                "pc_sysrootdir": "/opt/sysroot/somewhere"
+            ])
+            XCTAssertEqual(parser.dependencies, ["gdk-3.0", "atk", "cairo", "cairo-gobject", "gdk-pixbuf-2.0", "gio-2.0"])
+            XCTAssertEqual(parser.privateDependencies, ["atk", "epoxy", "gio-unix-2.0"])
+            XCTAssertEqual(parser.cFlags, ["-I/opt/sysroot/somewhere/usr/local/Cellar/gtk+3/3.18.9/include/gtk-3.0"])
+            XCTAssertEqual(parser.libs, ["-L/opt/sysroot/somewhere/usr/local/Cellar/gtk+3/3.18.9/lib", "-lgtk-3"])
+        }
+
+        // sysroot should be not be prepended if it is already a prefix
+        // - pkgconf makes this check, but pkg-config does not
+        // - If the .pc file lies outside sysrootDir, pkgconf sets pc_sysrootdir to the empty string
+        //      https://github.com/pkgconf/pkgconf/issues/213
+        //   SwiftPM does not currently implement this special case.
+        try loadPCFile("gtk+-3.0.pc", sysrootDir: "/usr/local/Cellar") { parser in
+            XCTAssertEqual(parser.variables, [
+                "libdir": "/usr/local/Cellar/gtk+3/3.18.9/lib",
+                "gtk_host": "x86_64-apple-darwin15.3.0",
+                "includedir": "/usr/local/Cellar/gtk+3/3.18.9/include",
+                "prefix": "/usr/local/Cellar/gtk+3/3.18.9",
+                "gtk_binary_version": "3.0.0",
+                "exec_prefix": "/usr/local/Cellar/gtk+3/3.18.9",
+                "targets": "quartz",
+                "pcfiledir": parser.pcFile.parentDirectory.pathString,
+                "pc_sysrootdir": "/usr/local/Cellar"
+            ])
+            XCTAssertEqual(parser.dependencies, ["gdk-3.0", "atk", "cairo", "cairo-gobject", "gdk-pixbuf-2.0", "gio-2.0"])
+            XCTAssertEqual(parser.privateDependencies, ["atk", "epoxy", "gio-unix-2.0"])
+            XCTAssertEqual(parser.cFlags, ["-I/usr/local/Cellar/gtk+3/3.18.9/include/gtk-3.0"])
+            XCTAssertEqual(parser.libs, ["-L/usr/local/Cellar/gtk+3/3.18.9/lib", "-lgtk-3"])
+        }
+
+        // sysroot should be not be double-prepended if it is used explicitly by the .pc file
+        // - pkgconf makes this check, but pkg-config does not
+        try loadPCFile("double_sysroot.pc", sysrootDir: "/sysroot") { parser in
+            XCTAssertEqual(parser.variables, [
+                "prefix": "/sysroot/usr",
+                "datarootdir": "/sysroot/usr/share",
+                "pkgdatadir": "/sysroot/usr/share/pkgdata",
+                "pcfiledir": parser.pcFile.parentDirectory.pathString,
+                "pc_sysrootdir": "/sysroot"
+            ])
+        }
+
+        // pkgconfig strips a leading sysroot prefix if sysroot appears anywhere else in the
+        // expanded variable.   SwiftPM's implementation is faithful to pkgconfig, even
+        // thought it might seem more logical not to strip the prefix in this case.
+        try loadPCFile("not_double_sysroot.pc", sysrootDir: "/sysroot") { parser in
+            XCTAssertEqual(parser.variables, [
+                "prefix": "/sysroot/usr",
+                "datarootdir": "/sysroot/usr/share",
+                "pkgdatadir": "/filler/sysroot/usr/share/pkgdata",
+                "pcfiledir": parser.pcFile.parentDirectory.pathString,
+                "pc_sysrootdir": "/sysroot"
+            ])
+        }
+
+        // pkgconfig does not strip sysroot if it is a relative path
+        try loadPCFile("double_sysroot.pc", sysrootDir: "sysroot") { parser in
+            XCTAssertEqual(parser.variables, [
+                "prefix": "sysroot/usr",
+                "datarootdir": "sysroot/usr/share",
+                "pkgdatadir": "sysroot/sysroot/usr/share/pkgdata",
+                "pcfiledir": parser.pcFile.parentDirectory.pathString,
+                "pc_sysrootdir": "sysroot"
+            ])
+        }
+    }
+
     private func pcFilePath(_ inputName: String) -> AbsolutePath {
         return AbsolutePath(#file).parentDirectory.appending(components: "pkgconfigInputs", inputName)
     }
 
-    private func loadPCFile(_ inputName: String, body: ((PkgConfigParser) -> Void)? = nil) throws {
-        var parser = try PkgConfigParser(pcFile: pcFilePath(inputName), fileSystem: localFileSystem)
+    private func loadPCFile(_ inputName: String, sysrootDir: String? = nil, body: ((PkgConfigParser) -> Void)? = nil) throws {
+        var parser = try PkgConfigParser(pcFile: pcFilePath(inputName), fileSystem: localFileSystem, sysrootDir: sysrootDir)
         try parser.parse()
         body?(parser)
     }

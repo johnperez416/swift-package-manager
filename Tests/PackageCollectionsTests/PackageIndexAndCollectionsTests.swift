@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2022 Apple Inc. and the Swift project authors
+// Copyright (c) 2022-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -14,13 +14,14 @@ import Basics
 import Foundation
 @testable import PackageCollections
 import PackageModel
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
+import struct TSCUtility.Version
+
 class PackageIndexAndCollectionsTests: XCTestCase {
-    func testCollectionAddRemoveGetList() throws {
-        try skipIfUnsupportedPlatform()
+    func testCollectionAddRemoveGetList() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
         
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -32,32 +33,32 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
         do {
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, 0, "list should be empty")
         }
 
         do {
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, order: nil, callback: callback) }
+            for collection in mockCollections {
+                _ = try await indexAndCollections.addCollection(collection.source, order: nil)
             }
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list, mockCollections, "list count should match")
         }
         
         do {
-            let collection = try tsc_await { callback in indexAndCollections.getCollection(mockCollections.first!.source, callback: callback) }
+            let collection = try await indexAndCollections.getCollection(mockCollections.first!.source)
             XCTAssertEqual(collection, mockCollections.first, "collection should match")
         }
         
         do {
-            _ = try tsc_await { callback in indexAndCollections.removeCollection(mockCollections.first!.source, callback: callback) }
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            try await indexAndCollections.removeCollection(mockCollections.first!.source)
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, mockCollections.count - 1, "list count should match")
         }
     }
     
-    func testRefreshCollections() throws {
-        try skipIfUnsupportedPlatform()
+    func testRefreshCollections() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
 
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -68,18 +69,18 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
-        try mockCollections.forEach { collection in
+        for collection in mockCollections {
             // save directly to storage to circumvent refresh on add
-            _ = try tsc_await { callback in storage.sources.add(source: collection.source, order: nil, callback: callback) }
+            try await storage.sources.add(source: collection.source, order: nil)
         }
-        _ = try tsc_await { callback in indexAndCollections.refreshCollections(callback: callback) }
+        _ = try await indexAndCollections.refreshCollections()
 
-        let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+        let list = try await indexAndCollections.listCollections()
         XCTAssertEqual(list.count, mockCollections.count, "list count should match")
     }
     
-    func testRefreshCollection() throws {
-        try skipIfUnsupportedPlatform()
+    func testRefreshCollection() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
 
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -90,18 +91,18 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
-        try mockCollections.forEach { collection in
+        for collection in mockCollections {
             // save directly to storage to circumvent refresh on add
-            _ = try tsc_await { callback in storage.sources.add(source: collection.source, order: nil, callback: callback) }
+            try await storage.sources.add(source: collection.source, order: nil)
         }
-        _ = try tsc_await { callback in indexAndCollections.refreshCollection(mockCollections.first!.source, callback: callback) }
+        _ = try await indexAndCollections.refreshCollection(mockCollections.first!.source)
 
-        let collection = try tsc_await { callback in indexAndCollections.getCollection(mockCollections.first!.source, callback: callback) }
+        let collection = try await indexAndCollections.getCollection(mockCollections.first!.source)
         XCTAssertEqual(collection, mockCollections.first, "collection should match")
     }
-    
-    func testListPackages() throws {
-        try skipIfUnsupportedPlatform()
+
+    func testListPackages() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
 
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -130,6 +131,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                   defaultToolsVersion: toolsVersion,
                                                                   verifiedCompatibility: nil,
                                                                   license: nil,
+                                                                  author: nil,
+                                                                  signer: nil,
                                                                   createdAt: nil)
 
         let mockPackageURL = "https://packages.mock/\(UUID().uuidString)"
@@ -144,7 +147,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                           authors: nil,
                                                           languages: nil)
 
-        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                 name: UUID().uuidString,
                                                                 overview: UUID().uuidString,
                                                                 keywords: [UUID().uuidString, UUID().uuidString],
@@ -153,7 +156,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                 createdBy: nil,
                                                                 signature: nil)
 
-        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                  name: UUID().uuidString,
                                                                  overview: UUID().uuidString,
                                                                  keywords: [UUID().uuidString, UUID().uuidString],
@@ -171,8 +174,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) }, callback: callback) }
+        for collection in mockCollections {
+            _ = try await indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) })
         }
 
         do {
@@ -180,7 +183,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
             let expectedPackages = Set(mockCollections.flatMap { $0.packages.map { $0.identity } } + [mockPackage.identity])
             let expectedCollections = Set([mockCollection.identifier, mockCollection2.identifier])
 
-            let searchResult = try tsc_await { callback in indexAndCollections.listPackages(collections: fetchCollections, callback: callback) }
+            let searchResult = try await indexAndCollections.listPackages(collections: fetchCollections)
             XCTAssertEqual(searchResult.items.count, expectedPackages.count, "list count should match")
             XCTAssertEqual(Set(searchResult.items.map { $0.package.identity }), expectedPackages, "items should match")
             XCTAssertEqual(Set(searchResult.items.first(where: { $0.package.identity == mockPackage.identity })?.collections ?? []), expectedCollections, "collections should match")
@@ -192,15 +195,15 @@ class PackageIndexAndCollectionsTests: XCTestCase {
             let expectedPackages = Set(mockCollections[0].packages.map { $0.identity } + [mockPackage.identity])
             let expectedCollections = Set([mockCollection.identifier, mockCollection2.identifier])
 
-            let searchResult = try tsc_await { callback in indexAndCollections.listPackages(collections: fetchCollections, callback: callback) }
+            let searchResult = try await indexAndCollections.listPackages(collections: fetchCollections)
             XCTAssertEqual(searchResult.items.count, expectedPackages.count, "list count should match")
             XCTAssertEqual(Set(searchResult.items.map { $0.package.identity }), expectedPackages, "items should match")
             XCTAssertEqual(Set(searchResult.items.first(where: { $0.package.identity == mockPackage.identity })?.collections ?? []), expectedCollections, "collections should match")
         }
     }
-    
-    func testListTargets() throws {
-        try skipIfUnsupportedPlatform()
+
+    func testListTargets() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
 
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -212,19 +215,19 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
         do {
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, 0, "list should be empty")
         }
 
         do {
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, order: nil, callback: callback) }
+            for collection in mockCollections {
+                _ = try await indexAndCollections.addCollection(collection.source, order: nil)
             }
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, mockCollections.count, "list count should match")
         }
 
-        let targetsList = try tsc_await { callback in indexAndCollections.listTargets(callback: callback) }
+        let targetsList = try await indexAndCollections.listTargets()
         let expectedTargets = Set(mockCollections.flatMap { $0.packages.flatMap { $0.versions.flatMap { $0.defaultManifest!.targets.map { $0.name } } } })
         XCTAssertEqual(Set(targetsList.map { $0.target.name }), expectedTargets, "targets should match")
 
@@ -237,8 +240,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         XCTAssertEqual(targetsCollectionsList, expectedCollections, "collections should match")
     }
     
-    func testFindTargets() throws {
-        try skipIfUnsupportedPlatform()
+    func testFindTargets() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
 
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -267,6 +270,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                   defaultToolsVersion: toolsVersion,
                                                                   verifiedCompatibility: nil,
                                                                   license: nil,
+                                                                  author: nil,
+                                                                  signer: nil,
                                                                   createdAt: nil)
 
         let mockPackageURL = "https://packages.mock/\(UUID().uuidString)"
@@ -281,7 +286,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                           authors: nil,
                                                           languages: nil)
 
-        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                 name: UUID().uuidString,
                                                                 overview: UUID().uuidString,
                                                                 keywords: [UUID().uuidString, UUID().uuidString],
@@ -290,7 +295,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                 createdBy: nil,
                                                                 signature: nil)
 
-        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                  name: UUID().uuidString,
                                                                  overview: UUID().uuidString,
                                                                  keywords: [UUID().uuidString, UUID().uuidString],
@@ -310,13 +315,13 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) }, callback: callback) }
+        for collection in mockCollections {
+            _ = try await indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) })
         }
 
         do {
             // search by exact target name
-            let searchResult = try tsc_await { callback in indexAndCollections.findTargets(mockTargets.first!.name, searchType: .exactMatch, callback: callback) }
+            let searchResult = try await indexAndCollections.findTargets(mockTargets.first!.name, searchType: .exactMatch)
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertEqual(searchResult.items.first?.packages.map { $0.identity }, [mockPackage.identity], "packages should match")
             XCTAssertEqual(searchResult.items.first?.packages.flatMap { $0.collections }.sorted(), expectedCollectionsIdentifiers, "collections should match")
@@ -324,7 +329,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
 
         do {
             // search by prefix target name
-            let searchResult = try tsc_await { callback in indexAndCollections.findTargets(String(mockTargets.first!.name.prefix(mockTargets.first!.name.count - 1)), searchType: .prefix, callback: callback) }
+            let searchResult = try await indexAndCollections.findTargets(String(mockTargets.first!.name.prefix(mockTargets.first!.name.count - 1)), searchType: .prefix)
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertEqual(searchResult.items.first?.packages.map { $0.identity }, [mockPackage.identity], "packages should match")
             XCTAssertEqual(searchResult.items.first?.packages.flatMap { $0.collections }.sorted(), expectedCollectionsIdentifiers, "collections should match")
@@ -332,12 +337,12 @@ class PackageIndexAndCollectionsTests: XCTestCase {
 
         do {
             // empty search
-            let searchResult = try tsc_await { callback in indexAndCollections.findTargets(UUID().uuidString, searchType: .exactMatch, callback: callback) }
+            let searchResult = try await indexAndCollections.findTargets(UUID().uuidString, searchType: .exactMatch)
             XCTAssertEqual(searchResult.items.count, 0, "list count should match")
         }
     }
         
-    func testListPackagesInIndex() throws {
+    func testListPackagesInIndex() async throws {
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
         let packageCollections = makePackageCollections(mockCollections: [], storage: storage)
@@ -349,12 +354,12 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
 
-        let result = try tsc_await { callback in indexAndCollections.listPackagesInIndex(offset: 1, limit: 5, callback: callback) }
+        let result = try await indexAndCollections.listPackagesInIndex(offset: 1, limit: 5)
         XCTAssertFalse(result.items.isEmpty)
     }
     
-    func testGetPackageMetadata() throws {
-        try skipIfUnsupportedPlatform()
+    func testGetPackageMetadata() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
         
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -369,19 +374,19 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
         
         do {
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, 0, "list should be empty")
         }
 
         do {
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, order: nil, callback: callback) }
+            for collection in mockCollections {
+                _ = try await indexAndCollections.addCollection(collection.source, order: nil)
             }
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, mockCollections.count, "list count should match")
         }
         
-        let metadata = try tsc_await { callback in indexAndCollections.getPackageMetadata(identity: mockPackage.identity, location: mockPackage.location, callback: callback) }
+        let metadata = try await indexAndCollections.getPackageMetadata(identity: mockPackage.identity, location: mockPackage.location)
         
         let expectedCollections = Set(mockCollections.filter { $0.packages.map { $0.identity }.contains(mockPackage.identity) }.map { $0.identifier })
         XCTAssertEqual(Set(metadata.collections), expectedCollections, "collections should match")
@@ -392,8 +397,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         XCTAssertEqual(metadata.provider?.name, "package index")
     }
     
-    func testGetPackageMetadata_brokenIndex() throws {
-        try skipIfUnsupportedPlatform()
+    func testGetPackageMetadata_brokenIndex() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
         
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -408,20 +413,20 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
         
         do {
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, 0, "list should be empty")
         }
 
         do {
-            try mockCollections.forEach { collection in
-                _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, order: nil, callback: callback) }
+            for collection in mockCollections {
+                _ = try await indexAndCollections.addCollection(collection.source, order: nil)
             }
-            let list = try tsc_await { callback in indexAndCollections.listCollections(callback: callback) }
+            let list = try await indexAndCollections.listCollections()
             XCTAssertEqual(list.count, mockCollections.count, "list count should match")
         }
         
-        let metadata = try tsc_await { callback in indexAndCollections.getPackageMetadata(identity: mockPackage.identity, location: mockPackage.location, callback: callback) }
-        
+        let metadata = try await indexAndCollections.getPackageMetadata(identity: mockPackage.identity, location: mockPackage.location)
+
         let expectedCollections = Set(mockCollections.filter { $0.packages.map { $0.identity }.contains(mockPackage.identity) }.map { $0.identifier })
         XCTAssertEqual(Set(metadata.collections), expectedCollections, "collections should match")
         
@@ -432,8 +437,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         XCTAssertNil(metadata.provider)
     }
     
-    func testGetPackageMetadata_indexAndCollectionError() throws {
-        try skipIfUnsupportedPlatform()
+    func testGetPackageMetadata_indexAndCollectionError() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
         
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -445,7 +450,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         
         let mockPackage = makeMockPackage(id: "test-package")
         // Package not found in collections; index is broken
-        XCTAssertThrowsError(try tsc_await { callback in indexAndCollections.getPackageMetadata(identity: mockPackage.identity, location: mockPackage.location, callback: callback) }) { error in
+        await XCTAssertAsyncThrowsError(try await indexAndCollections.getPackageMetadata(identity: mockPackage.identity, location: mockPackage.location)) { error in
             // Index error is returned
             guard let _ = error as? BrokenPackageIndex.TerribleThing else {
                 return XCTFail("Expected BrokenPackageIndex.TerribleThing")
@@ -453,8 +458,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         }
     }
     
-    func testFindPackages() throws {
-        try skipIfUnsupportedPlatform()
+    func testFindPackages() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
         
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -483,6 +488,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                   defaultToolsVersion: toolsVersion,
                                                                   verifiedCompatibility: nil,
                                                                   license: nil,
+                                                                  author: nil,
+                                                                  signer: nil,
                                                                   createdAt: nil)
 
         let url = "https://packages.mock/\(UUID().uuidString)"
@@ -497,7 +504,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                           authors: nil,
                                                           languages: nil)
 
-        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                 name: UUID().uuidString,
                                                                 overview: UUID().uuidString,
                                                                 keywords: [UUID().uuidString, UUID().uuidString],
@@ -506,7 +513,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                 createdBy: nil,
                                                                 signature: nil)
 
-        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                  name: UUID().uuidString,
                                                                  overview: UUID().uuidString,
                                                                  keywords: [UUID().uuidString, UUID().uuidString],
@@ -525,13 +532,13 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
         
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) }, callback: callback) }
+        for collection in mockCollections {
+            _ = try await indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) })
         }
         
         // both index and collections
         do {
-            let searchResult = try tsc_await { callback in indexAndCollections.findPackages(mockPackage.identity.description, in: .both(collections: nil), callback: callback) }
+            let searchResult = try await indexAndCollections.findPackages(mockPackage.identity.description, in: .both(collections: nil))
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertEqual(searchResult.items.first?.collections.sorted(), expectedCollectionsIdentifiers, "collections should match")
             XCTAssertEqual(searchResult.items.first?.indexes, [packageIndex.url], "indexes should match")
@@ -539,7 +546,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         
         // index only
         do {
-            let searchResult = try tsc_await { callback in indexAndCollections.findPackages(mockPackage.identity.description, in: .index, callback: callback) }
+            let searchResult = try await indexAndCollections.findPackages(mockPackage.identity.description, in: .index)
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertTrue(searchResult.items.first?.collections.isEmpty ?? true, "collections should match")
             XCTAssertEqual(searchResult.items.first?.indexes, [packageIndex.url], "indexes should match")
@@ -547,15 +554,15 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         
         // collections only
         do {
-            let searchResult = try tsc_await { callback in indexAndCollections.findPackages(mockPackage.identity.description, in: .collections(nil), callback: callback) }
+            let searchResult = try await indexAndCollections.findPackages(mockPackage.identity.description, in: .collections(nil))
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertEqual(searchResult.items.first?.collections.sorted(), expectedCollectionsIdentifiers, "collections should match")
             XCTAssertTrue(searchResult.items.first?.indexes.isEmpty ?? true, "indexes should match")
         }
     }
     
-    func testFindPackages_brokenIndex() throws {
-        try skipIfUnsupportedPlatform()
+    func testFindPackages_brokenIndex() async throws {
+        try PackageCollectionsTests_skipIfUnsupportedPlatform()
         
         let storage = makeMockStorage()
         defer { XCTAssertNoThrow(try storage.close()) }
@@ -584,6 +591,8 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                   defaultToolsVersion: toolsVersion,
                                                                   verifiedCompatibility: nil,
                                                                   license: nil,
+                                                                  author: nil,
+                                                                  signer: nil,
                                                                   createdAt: nil)
 
         let url = "https://packages.mock/\(UUID().uuidString)"
@@ -598,7 +607,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                           authors: nil,
                                                           languages: nil)
 
-        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                 name: UUID().uuidString,
                                                                 overview: UUID().uuidString,
                                                                 keywords: [UUID().uuidString, UUID().uuidString],
@@ -607,7 +616,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
                                                                 createdBy: nil,
                                                                 signature: nil)
 
-        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: URL(string: "https://feed.mock/\(UUID().uuidString)")!),
+        let mockCollection2 = PackageCollectionsModel.Collection(source: .init(type: .json, url: "https://feed.mock/\(UUID().uuidString)"),
                                                                  name: UUID().uuidString,
                                                                  overview: UUID().uuidString,
                                                                  keywords: [UUID().uuidString, UUID().uuidString],
@@ -626,13 +635,13 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         let indexAndCollections = PackageIndexAndCollections(index: packageIndex, collections: packageCollections, observabilityScope: ObservabilitySystem.NOOP)
         defer { XCTAssertNoThrow(try indexAndCollections.close()) }
         
-        try mockCollections.forEach { collection in
-            _ = try tsc_await { callback in indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) }, callback: callback) }
+        for collection in mockCollections {
+            _ = try await indexAndCollections.addCollection(collection.source, trustConfirmationProvider: { _, cb in cb(true) })
         }
         
         // both index and collections
         do {
-            let searchResult = try tsc_await { callback in indexAndCollections.findPackages(mockPackage.identity.description, in: .both(collections: nil), callback: callback) }
+            let searchResult = try await indexAndCollections.findPackages(mockPackage.identity.description, in: .both(collections: nil))
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertEqual(searchResult.items.first?.collections.sorted(), expectedCollectionsIdentifiers, "collections should match")
             // Results come from collections since index is broken
@@ -641,7 +650,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         
         // index only
         do {
-            XCTAssertThrowsError(try tsc_await { callback in indexAndCollections.findPackages(mockPackage.identity.description, in: .index, callback: callback) }) { error in
+            await XCTAssertAsyncThrowsError(try await indexAndCollections.findPackages(mockPackage.identity.description, in: .index)) { error in
                 guard error is BrokenPackageIndex.TerribleThing else {
                     return XCTFail("invalid error \(error)")
                 }
@@ -650,7 +659,7 @@ class PackageIndexAndCollectionsTests: XCTestCase {
         
         // collections only
         do {
-            let searchResult = try tsc_await { callback in indexAndCollections.findPackages(mockPackage.identity.description, in: .collections(nil), callback: callback) }
+            let searchResult = try await indexAndCollections.findPackages(mockPackage.identity.description, in: .collections(nil))
             XCTAssertEqual(searchResult.items.count, 1, "list count should match")
             XCTAssertEqual(searchResult.items.first?.collections.sorted(), expectedCollectionsIdentifiers, "collections should match")
             // Not searching in index so should not be impacted by its error
@@ -680,52 +689,49 @@ private func makePackageCollections(
 
 private struct MockPackageIndex: PackageIndexProtocol {
     let isEnabled = true
-    
     let url: URL
+
     private let packages: [PackageCollectionsModel.Package]
     
     init(
-        url: URL = URL(string: "https://mock-package-index")!,
+        url: URL = "https://mock-package-index",
         packages: [PackageCollectionsModel.Package] = []
     ) {
         self.url = url
         self.packages = packages
     }
-    
+
     func getPackageMetadata(
         identity: PackageIdentity,
-        location: String?,
-        callback: @escaping (Result<PackageCollectionsModel.PackageMetadata, Error>) -> Void
-    ) {
+        location: String?
+    ) async throws -> PackageCollectionsModel.PackageMetadata {
         guard let package = self.packages.first(where: { $0.identity == identity }) else {
-            return callback(.failure(NotFoundError("Package \(identity) not found")))
+            throw NotFoundError("Package \(identity) not found")
         }
-        callback(.success((package: package, collections: [], provider: .init(name: "package index", authTokenType: nil, isAuthTokenConfigured: true))))
+        return (package: package, collections: [], provider: .init(name: "package index", authTokenType: nil, isAuthTokenConfigured: true))
     }
 
     func findPackages(
-        _ query: String,
-        callback: @escaping (Result<PackageCollectionsModel.PackageSearchResult, Error>) -> Void
-    ) {
+        _ query: String
+    ) async throws  -> PackageCollectionsModel.PackageSearchResult{
         let items = self.packages.filter { $0.identity.description.contains(query) }
-        callback(.success(.init(items: items.map { .init(package: $0, collections: [], indexes: [self.url]) })))
+        return PackageCollectionsModel.PackageSearchResult(items: items.map { .init(package: $0, collections: [], indexes: [self.url]) })
     }
     
     func listPackages(
         offset: Int,
-        limit: Int,
-        callback: @escaping (Result<PackageCollectionsModel.PaginatedPackageList, Error>) -> Void
-    ) {
+        limit: Int
+    ) async throws -> PackageCollectionsModel.PaginatedPackageList {
         guard !self.packages.isEmpty, offset < self.packages.count, limit > 0 else {
-            return callback(.success(.init(items: [], offset: offset, limit: limit, total: self.packages.count)))
+            return PackageCollectionsModel.PaginatedPackageList(items: [], offset: offset, limit: limit, total: self.packages.count)
         }
 
-        callback(.success(.init(
+        return PackageCollectionsModel.PaginatedPackageList(
             items: Array(self.packages[offset..<min(self.packages.count, offset + limit)]),
             offset: offset,
             limit: limit,
             total: self.packages.count
-        )))
+        )
     }
 }
 
@@ -734,25 +740,22 @@ private struct BrokenPackageIndex: PackageIndexProtocol {
     
     func getPackageMetadata(
         identity: PackageIdentity,
-        location: String?,
-        callback: @escaping (Result<PackageCollectionsModel.PackageMetadata, Error>) -> Void
-    ) {
-        callback(.failure(TerribleThing()))
+        location: String?
+    ) async throws -> PackageCollectionsModel.PackageMetadata {
+        throw TerribleThing()
     }
 
     func findPackages(
-        _ query: String,
-        callback: @escaping (Result<PackageCollectionsModel.PackageSearchResult, Error>) -> Void
-    ) {
-        callback(.failure(TerribleThing()))
+        _ query: String
+    ) async throws -> PackageCollectionsModel.PackageSearchResult {
+        throw TerribleThing()
     }
     
     func listPackages(
         offset: Int,
-        limit: Int,
-        callback: @escaping (Result<PackageCollectionsModel.PaginatedPackageList, Error>) -> Void
-    ) {
-        callback(.failure(TerribleThing()))
+        limit: Int
+    ) async throws -> PackageCollectionsModel.PaginatedPackageList {
+        throw TerribleThing()
     }
     
     struct TerribleThing: Error {}

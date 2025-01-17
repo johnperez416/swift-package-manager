@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2017 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -12,7 +12,10 @@
 
 import Basics
 import PackageModel
-import TSCBasic
+
+import class Basics.AsyncProcess
+import struct TSCBasic.RegEx
+
 import enum TSCUtility.Platform
 
 /// Wrapper struct containing result of a pkgConfig query.
@@ -58,15 +61,29 @@ public struct PkgConfigResult {
 }
 
 /// Get pkgConfig result for a system library target.
-public func pkgConfigArgs(for target: SystemLibraryTarget, brewPrefix: AbsolutePath? = .none, fileSystem: FileSystem, observabilityScope: ObservabilityScope) -> [PkgConfigResult] {
+public func pkgConfigArgs(
+    for target: SystemLibraryModule,
+    pkgConfigDirectories: [AbsolutePath],
+    sdkRootPath: AbsolutePath? = nil,
+    brewPrefix: AbsolutePath? = .none,
+    fileSystem: FileSystem,
+    observabilityScope: ObservabilityScope
+) throws -> [PkgConfigResult] {
     // If there is no pkg config name defined, we're done.
     guard let pkgConfigNames = target.pkgConfig else { return [] }
 
     // Compute additional search paths for the provider, if any.
     let provider = target.providers?.first { $0.isAvailable }
-    let additionalSearchPaths = provider?.pkgConfigSearchPath(brewPrefixOverride: brewPrefix) ?? []
 
-   var ret: [PkgConfigResult] = []
+    let additionalSearchPaths: [AbsolutePath]
+    // Give priority to `pkgConfigDirectories` passed as an argument to this function.
+    if let providerSearchPaths = try provider?.pkgConfigSearchPath(brewPrefixOverride: brewPrefix) {
+        additionalSearchPaths = pkgConfigDirectories + providerSearchPaths
+    } else {
+        additionalSearchPaths = pkgConfigDirectories
+    }
+
+    var ret: [PkgConfigResult] = []
     // Get the pkg config flags.
     for pkgConfigName in pkgConfigNames.components(separatedBy: " ") {
         let result: PkgConfigResult
@@ -83,20 +100,27 @@ public func pkgConfigArgs(for target: SystemLibraryTarget, brewPrefix: AbsoluteP
             let filtered = try allowlist(pcFile: pkgConfigName, flags: (pkgConfig.cFlags, pkgConfig.libs))
 
             // Remove any default flags which compiler adds automatically.
-            let (cFlags, libs) = try removeDefaultFlags(cFlags: filtered.cFlags, libs: filtered.libs)
+            var (cFlags, libs) = try removeDefaultFlags(cFlags: filtered.cFlags, libs: filtered.libs)
 
-            // Set the error if there are any unallowed flags.
+            // Patch any paths containing an SDK to the current SDK
+            // See https://github.com/swiftlang/swift-package-manager/issues/6439
+            if let sdkRootPath = sdkRootPath {
+                cFlags = try patchSDKPaths(in: cFlags, to: sdkRootPath)
+                libs = try patchSDKPaths(in: libs, to: sdkRootPath)
+            }
+
+            // Set the error if there are any disallowed flags.
             var error: Swift.Error?
-            if !filtered.unallowed.isEmpty {
-                error = PkgConfigError.prohibitedFlags(filtered.unallowed.joined(separator: ", "))
+            if !filtered.disallowed.isEmpty {
+                error = PkgConfigError.prohibitedFlags(filtered.disallowed.joined(separator: ", "))
             }
 
             result = PkgConfigResult(
-                    pkgConfigName: pkgConfigName,
-                    cFlags: cFlags,
-                    libs: libs,
-                    error: error,
-                    provider: provider
+                pkgConfigName: pkgConfigName,
+                cFlags: cFlags,
+                libs: libs,
+                error: error,
+                provider: provider
             )
         } catch {
             result = PkgConfigResult(pkgConfigName: pkgConfigName, error: error, provider: provider)
@@ -104,10 +128,12 @@ public func pkgConfigArgs(for target: SystemLibraryTarget, brewPrefix: AbsoluteP
 
         // If there is no pc file on system and we have an available provider, emit a warning.
         if let provider = result.provider, result.couldNotFindConfigFile {
-            observabilityScope.emit(warning: "you may be able to install \(result.pkgConfigName) using your system-packager:\n\(provider.installText)")
+            observabilityScope.emit(
+                warning: "you may be able to install \(result.pkgConfigName) using your system-packager:\n\(provider.installText)"
+            )
         } else if let error = result.error {
             observabilityScope.emit(
-                warning: "\(error)",
+                warning: error.interpolationDescription,
                 metadata: .pkgConfig(pcFile: result.pkgConfigName, targetName: target.name)
             )
         }
@@ -133,7 +159,7 @@ extension SystemPackageProviderDescription {
 
     /// Check if the provider is available for the current platform.
     var isAvailable: Bool {
-        guard let platform = Platform.currentPlatform else { return false }
+        guard let platform = Platform.current else { return false }
         switch self {
         case .brew:
             if case .darwin = platform {
@@ -161,11 +187,11 @@ extension SystemPackageProviderDescription {
         return false
     }
 
-    func pkgConfigSearchPath(brewPrefixOverride: AbsolutePath?) -> [AbsolutePath] {
+    func pkgConfigSearchPath(brewPrefixOverride: AbsolutePath?) throws -> [AbsolutePath] {
         switch self {
         case .brew(let packages):
             let brewPrefix: String
-            if let brewPrefixOverride = brewPrefixOverride {
+            if let brewPrefixOverride {
                 brewPrefix = brewPrefixOverride.pathString
             } else {
                 // Homebrew can have multiple versions of the same package. The
@@ -174,7 +200,7 @@ extension SystemPackageProviderDescription {
                 // to the latest version. Instead use the version as symlinked
                 // in /usr/local/opt/(NAME)/lib/pkgconfig.
                 struct Static {
-                    static let value = { try? TSCBasic.Process.checkNonZeroExit(args: "brew", "--prefix").spm_chomp() }()
+                    static let value = { try? AsyncProcess.checkNonZeroExit(args: "brew", "--prefix").spm_chomp() }()
                 }
                 if let value = Static.value {
                     brewPrefix = value
@@ -182,7 +208,7 @@ extension SystemPackageProviderDescription {
                     return []
                 }
             }
-            return packages.map({ AbsolutePath(brewPrefix).appending(components: "opt", $0, "lib", "pkgconfig") })
+            return try packages.map({ try AbsolutePath(validating: brewPrefix).appending(components: "opt", $0, "lib", "pkgconfig") })
         case .apt:
             return []
         case .yum:
@@ -205,21 +231,21 @@ extension SystemPackageProviderDescription {
 public func allowlist(
     pcFile: String,
     flags: (cFlags: [String], libs: [String])
-) throws -> (cFlags: [String], libs: [String], unallowed: [String]) {
-    // Returns a tuple with the array of allowed flag and the array of unallowed flags.
-    func filter(flags: [String], filters: [String]) throws -> (allowed: [String], unallowed: [String]) {
+) throws -> (cFlags: [String], libs: [String], disallowed: [String]) {
+    // Returns a tuple with the array of allowed flag and the array of disallowed flags.
+    func filter(flags: [String], filters: [String]) throws -> (allowed: [String], disallowed: [String]) {
         var allowed = [String]()
-        var unallowed = [String]()
+        var disallowed = [String]()
         var it = flags.makeIterator()
         while let flag = it.next() {
             guard let filter = filters.filter({ flag.hasPrefix($0) }).first else {
-                unallowed += [flag]
+                disallowed += [flag]
                 continue
             }
 
           // Warning suppression flag has no arguments and is not suffixed.
           guard !flag.hasPrefix("-w") || flag == "-w" else {
-            unallowed += [flag]
+            disallowed += [flag]
             continue
           }
 
@@ -235,13 +261,46 @@ public func allowlist(
             }
             allowed += [flag]
         }
-        return (allowed, unallowed)
+        return (allowed, disallowed)
     }
 
     let filteredCFlags = try filter(flags: flags.cFlags, filters: ["-I", "-F"])
     let filteredLibs = try filter(flags: flags.libs, filters: ["-L", "-l", "-F", "-framework", "-w"])
 
-    return (filteredCFlags.allowed, filteredLibs.allowed, filteredCFlags.unallowed + filteredLibs.unallowed)
+    return (filteredCFlags.allowed, filteredLibs.allowed, filteredCFlags.disallowed + filteredLibs.disallowed)
+}
+
+/// Maps values of the given flag with the given transform, removing those where the transform returns `nil`.
+private func patch(flag: String, in flags: [String], transform: (String) -> String?) throws -> [String] {
+    var result = [String]()
+    var it = flags.makeIterator()
+    while let current = it.next() {
+        if current == flag {
+            // Handle <flag><space><value> style.
+            guard let value = it.next() else {
+                throw InternalError("Expected associated value")
+            }
+            if let newValue = transform(value) {
+                result.append(flag)
+                result.append(newValue)
+            }
+        } else if current.starts(with: flag) {
+            // Handle <flag><value> style
+            let value = String(current.dropFirst(flag.count))
+            if let newValue = transform(value) {
+                result.append(flag + newValue)
+            }
+        } else {
+            // Leave other flags as-is
+            result.append(current)
+        }
+    }
+    return result
+}
+
+/// Removes the given flag from the given flags.
+private func remove(flag: String, with expectedValue: String, from flags: [String]) throws -> [String] {
+    try patch(flag: flag, in: flags) { value in value == expectedValue ? nil : value }
 }
 
 /// Remove the default flags which are already added by the compiler.
@@ -249,45 +308,33 @@ public func allowlist(
 /// This behavior is similar to pkg-config cli tool and helps avoid conflicts between
 /// sdk and default search paths in macOS.
 public func removeDefaultFlags(cFlags: [String], libs: [String]) throws -> ([String], [String]) {
-    /// removes a flag from given array of flags.
-    func remove(flag: (String, String), from flags: [String]) throws -> [String] {
-        var result = [String]()
-        var it = flags.makeIterator()
-        while let curr = it.next() {
-            switch curr {
-            case flag.0:
-                // Check for <flag><space><value> style.
-                guard let val = it.next() else {
-                    throw InternalError("Expected associated value")
-                }
-                // If we found a match, don't add these flags and just skip.
-                if val == flag.1 { continue }
-                // Otherwise add both the flags.
-                result.append(curr)
-                result.append(val)
-
-            case flag.0 + flag.1:
-                // Check for <flag><value> style.
-                continue
-
-            default:
-                // Otherwise just append this flag.
-                result.append(curr)
-            }
-        }
-        return result
-    }
     return (
-        try remove(flag: ("-I", "/usr/include"), from: cFlags),
-        try remove(flag: ("-L", "/usr/lib"), from: libs)
+        try remove(flag: "-I", with: "/usr/include", from: cFlags),
+        try remove(flag: "-L", with: "/usr/lib", from: libs)
     )
+}
+
+/// Replaces any path containing *.sdk with the current SDK to avoid conflicts.
+///
+/// See https://github.com/swiftlang/swift-package-manager/issues/6439 for details.
+public func patchSDKPaths(in flags: [String], to sdkRootPath: AbsolutePath) throws -> [String] {
+    let sdkRegex = try! RegEx(pattern: #"^.*\.sdk(\/.*|$)"#)
+
+    return try ["-I", "-L"].reduce(flags) { (flags, flag) in
+        try patch(flag: flag, in: flags) { value in
+            guard let groups = sdkRegex.matchGroups(in: value).first else {
+                return value
+            }
+            return sdkRootPath.pathString + groups[0]
+        }
+    }
 }
 
 extension ObservabilityMetadata {
     public static func pkgConfig(pcFile: String, targetName: String) -> Self {
         var metadata = ObservabilityMetadata()
         metadata.pcFile = "\(pcFile).pc"
-        metadata.targetName = targetName
+        metadata.moduleName = targetName
         return metadata
     }
 }

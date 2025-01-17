@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2014-2020 Apple Inc. and the Swift project authors
+// Copyright (c) 2014-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -11,20 +11,22 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
+import _Concurrency
 import Foundation
 import PackageGraph
 import PackageLoading
 import PackageModel
 import PackageRegistry
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 @testable import Workspace
 import XCTest
 
-class RegistryPackageContainerTests: XCTestCase {
+import struct TSCUtility.Version
 
-    func testToolsVersionCompatibleVersions() throws {
+final class RegistryPackageContainerTests: XCTestCase {
+    func testToolsVersionCompatibleVersions() async throws {
         let fs = InMemoryFileSystem()
+        try fs.createMockToolchain()
 
         let packageIdentity = PackageIdentity.plain("org.foo")
         let packageVersion = Version("1.0.0")
@@ -77,7 +79,7 @@ class RegistryPackageContainerTests: XCTestCase {
                                 "Content-Version": "1",
                                 "Content-Type": "text/x-swift"
                             ],
-                            body: "// swift-tools-version:\(toolsVersion)".data(using: .utf8)
+                            body: Data("// swift-tools-version:\(toolsVersion)".utf8)
                         )
                     ))
                 }
@@ -85,8 +87,10 @@ class RegistryPackageContainerTests: XCTestCase {
 
             return try Workspace._init(
                 fileSystem: fs,
+                environment: .mockEnvironment,
                 location: .init(forRootPackage: packagePath, fileSystem: fs),
                 customToolsVersion: toolsVersion,
+                customHostToolchain: .mockHostToolchain(fs),
                 customManifestLoader: MockManifestLoader(manifests: [:]),
                 customRegistryClient: registryClient
             )
@@ -95,30 +99,31 @@ class RegistryPackageContainerTests: XCTestCase {
         do {
             let provider = try createProvider(.v4)
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, ["1.0.1"])
         }
 
         do {
             let provider = try createProvider(.v4_2)
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, ["1.0.2", "1.0.1"])
         }
 
         do {
             let provider = try createProvider(.v5_4)
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, ["1.0.3", "1.0.2", "1.0.1"])
         }
     }
 
-    func testAlternateManifests() throws {
+    func testAlternateManifests() async throws {
         let fs = InMemoryFileSystem()
+        try fs.createMockToolchain()
 
         let packageIdentity = PackageIdentity.plain("org.foo")
         let packageVersion = Version("1.0.0")
@@ -142,7 +147,7 @@ class RegistryPackageContainerTests: XCTestCase {
                                 \(self.manifestLink(packageIdentity, .v5_5)),
                                 """
                             ],
-                            body: "// swift-tools-version:\(ToolsVersion.v5_3)".data(using: .utf8)
+                            body: Data("// swift-tools-version:\(ToolsVersion.v5_3)".utf8)
                         )
                     ))
                 }
@@ -150,8 +155,10 @@ class RegistryPackageContainerTests: XCTestCase {
 
             return try Workspace._init(
                 fileSystem: fs,
+                environment: .mockEnvironment,
                 location: .init(forRootPackage: packagePath, fileSystem: fs),
                 customToolsVersion: toolsVersion,
+                customHostToolchain: .mockHostToolchain(fs),
                 customManifestLoader: MockManifestLoader(manifests: [:]),
                 customRegistryClient: registryClient
             )
@@ -160,51 +167,57 @@ class RegistryPackageContainerTests: XCTestCase {
         do {
             let provider = try createProvider(.v5_2) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            XCTAssertEqual(try container.toolsVersion(for: packageVersion), .v5_3)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let version = try await container.toolsVersion(for: packageVersion)
+            XCTAssertEqual(version, .v5_3)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, [])
         }
 
         do {
             let provider = try createProvider(.v5_3) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            XCTAssertEqual(try container.toolsVersion(for: packageVersion), .v5_3)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let version = try await container.toolsVersion(for: packageVersion)
+            XCTAssertEqual(version, .v5_3)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, [packageVersion])
         }
 
         do {
             let provider = try createProvider(.v5_4) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            XCTAssertEqual(try container.toolsVersion(for: packageVersion), .v5_4)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let version = try await container.toolsVersion(for: packageVersion)
+            XCTAssertEqual(version, .v5_4)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, [packageVersion])
         }
 
         do {
             let provider = try createProvider(.v5_5) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            XCTAssertEqual(try container.toolsVersion(for: packageVersion), .v5_5)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let version = try await container.toolsVersion(for: packageVersion)
+            XCTAssertEqual(version, .v5_5)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, [packageVersion])
         }
 
         do {
             let provider = try createProvider(.v5_6) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false)
-            XCTAssertEqual(try container.toolsVersion(for: packageVersion), .v5_5)
-            let versions = try container.toolsVersionsAppropriateVersionsDescending()
+            let container = try await provider.getContainer(for: ref)
+            let version = try await container.toolsVersion(for: packageVersion)
+            XCTAssertEqual(version, .v5_5)
+            let versions = try await container.toolsVersionsAppropriateVersionsDescending()
             XCTAssertEqual(versions, [packageVersion])
         }
     }
 
-    func testLoadManifest() throws {
+    func testLoadManifest() async throws {
         let fs = InMemoryFileSystem()
+        try fs.createMockToolchain()
 
         let packageIdentity = PackageIdentity.plain("org.foo")
         let packageVersion = Version("1.0.0")
@@ -213,7 +226,7 @@ class RegistryPackageContainerTests: XCTestCase {
         let v5_3_3 = ToolsVersion(string: "5.3.3")!
 
         func createProvider(_ toolsVersion: ToolsVersion) throws -> PackageContainerProvider {
-            let supportedVersions = Set<ToolsVersion>([ToolsVersion.v5_3, v5_3_3, .v5_4, .v5_5])
+            let supportedVersions = Set<ToolsVersion>([ToolsVersion.v5, .v5_3, v5_3_3, .v5_4, .v5_5])
             let registryClient = try makeRegistryClient(
                 packageIdentity: packageIdentity,
                 packageVersion: packageVersion,
@@ -235,7 +248,7 @@ class RegistryPackageContainerTests: XCTestCase {
                                     self.manifestLink(packageIdentity, $0)
                                 }.joined(separator: ",\n")
                             ],
-                            body: "// swift-tools-version:\(requestedVersion)".data(using: .utf8)
+                            body: Data("// swift-tools-version:\(requestedVersion)".utf8)
                         )
                     ))
                 }
@@ -243,8 +256,10 @@ class RegistryPackageContainerTests: XCTestCase {
 
             return try Workspace._init(
                 fileSystem: fs,
+                environment: .mockEnvironment,
                 location: .init(forRootPackage: packagePath, fileSystem: fs),
                 customToolsVersion: toolsVersion,
+                customHostToolchain: .mockHostToolchain(fs),
                 customManifestLoader: MockManifestLoader(),
                 customRegistryClient: registryClient
             )
@@ -257,13 +272,14 @@ class RegistryPackageContainerTests: XCTestCase {
                           packageLocation: String,
                           packageVersion: (version: Version?, revision: String?)?,
                           identityResolver: IdentityResolver,
+                          dependencyMapper: DependencyMapper,
                           fileSystem: FileSystem,
                           observabilityScope: ObservabilityScope,
                           delegateQueue: DispatchQueue,
                           callbackQueue: DispatchQueue,
                           completion: @escaping (Result<Manifest, Error>) -> Void) {
                     completion(.success(
-                        Manifest(
+                        Manifest.createManifest(
                             displayName: packageIdentity.description,
                             path: manifestPath,
                             packageKind: packageKind,
@@ -274,49 +290,57 @@ class RegistryPackageContainerTests: XCTestCase {
                     ))
                 }
 
-                func resetCache() throws {}
-                func purgeCache() throws {}
+                func resetCache(observabilityScope: ObservabilityScope) {}
+                func purgeCache(observabilityScope: ObservabilityScope) {}
             }
         }
 
         do {
             let provider = try createProvider(.v5_3) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false) as! RegistryPackageContainer
-            let manifest = try container.loadManifest(version: packageVersion)
+            let container = try await provider.getContainer(for: ref) as! RegistryPackageContainer
+            let manifest = try await container.loadManifest(version: packageVersion)
             XCTAssertEqual(manifest.toolsVersion, .v5_3)
         }
 
         do {
             let provider = try createProvider(v5_3_3) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false) as! RegistryPackageContainer
-            let manifest = try container.loadManifest(version: packageVersion)
+            let container = try await provider.getContainer(for: ref) as! RegistryPackageContainer
+            let manifest = try await container.loadManifest(version: packageVersion)
             XCTAssertEqual(manifest.toolsVersion, v5_3_3)
         }
 
         do {
             let provider = try createProvider(.v5_4) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false) as! RegistryPackageContainer
-            let manifest = try container.loadManifest(version: packageVersion)
+            let container = try await provider.getContainer(for: ref) as! RegistryPackageContainer
+            let manifest = try await container.loadManifest(version: packageVersion)
             XCTAssertEqual(manifest.toolsVersion, .v5_4)
         }
 
         do {
             let provider = try createProvider(.v5_5) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false) as! RegistryPackageContainer
-            let manifest = try container.loadManifest(version: packageVersion)
+            let container = try await provider.getContainer(for: ref) as! RegistryPackageContainer
+            let manifest = try await container.loadManifest(version: packageVersion)
             XCTAssertEqual(manifest.toolsVersion, .v5_5)
         }
 
         do {
             let provider = try createProvider(.v5_6) // the version of the alternate
             let ref = PackageReference.registry(identity: packageIdentity)
-            let container = try provider.getContainer(for: ref, skipUpdate: false) as! RegistryPackageContainer
-            let manifest = try container.loadManifest(version: packageVersion)
+            let container = try await provider.getContainer(for: ref) as! RegistryPackageContainer
+            let manifest = try await container.loadManifest(version: packageVersion)
             XCTAssertEqual(manifest.toolsVersion, .v5_5)
+        }
+        
+        do {
+            let provider = try createProvider(.v5) // the version of the alternate
+            let ref = PackageReference.registry(identity: packageIdentity)
+            let container = try await provider.getContainer(for: ref) as! RegistryPackageContainer
+            let manifest = try await container.loadManifest(version: packageVersion)
+            XCTAssertEqual(manifest.toolsVersion, .v5)
         }
     }
 
@@ -326,23 +350,23 @@ class RegistryPackageContainerTests: XCTestCase {
         packagePath: AbsolutePath,
         fileSystem: FileSystem,
         configuration: PackageRegistry.RegistryConfiguration? = .none,
-        releasesRequestHandler: HTTPClient.Handler? = .none,
-        versionMetadataRequestHandler: HTTPClient.Handler? = .none,
-        manifestRequestHandler: HTTPClient.Handler? = .none,
-        downloadArchiveRequestHandler: HTTPClient.Handler? = .none,
+        releasesRequestHandler: LegacyHTTPClient.Handler? = .none,
+        versionMetadataRequestHandler: LegacyHTTPClient.Handler? = .none,
+        manifestRequestHandler: LegacyHTTPClient.Handler? = .none,
+        downloadArchiveRequestHandler: LegacyHTTPClient.Handler? = .none,
         archiver: Archiver? = .none
     ) throws -> RegistryClient {
         let jsonEncoder = JSONEncoder.makeWithDefaults()
         let fingerprintStorage = MockPackageFingerprintStorage()
 
-        guard let (packageScope, packageName) = packageIdentity.scopeAndName else {
-            throw StringError("Invalid package identity")
+        guard let registryIdentity = packageIdentity.registry else {
+            throw StringError("Invalid package identifier: '\(packageIdentity)'")
         }
 
         var configuration = configuration
         if configuration == nil {
             configuration = PackageRegistry.RegistryConfiguration()
-            configuration!.defaultRegistry = .init(url: URL(string: "http://localhost")!)
+            configuration!.defaultRegistry = .init(url: "http://localhost", supportsAvailability: false)
         }
 
         let releasesRequestHandler = releasesRequestHandler ?? { request, _ , completion in
@@ -369,10 +393,12 @@ class RegistryPackageContainerTests: XCTestCase {
                     .init(
                         name: "source-archive",
                         type: "application/zip",
-                        checksum: ""
+                        checksum: "",
+                        signing: nil
                     )
                 ],
-                metadata: .init(description: "")
+                metadata: .init(description: ""),
+                publishedAt: nil
             )
             completion(.success(
                 HTTPClientResponse(
@@ -394,7 +420,7 @@ class RegistryPackageContainerTests: XCTestCase {
                         "Content-Version": "1",
                         "Content-Type": "text/x-swift"
                     ],
-                    body: "// swift-tools-version:\(ToolsVersion.current)".data(using: .utf8)
+                    body: Data("// swift-tools-version:\(ToolsVersion.current)".utf8)
                 )
             ))
         }
@@ -402,8 +428,8 @@ class RegistryPackageContainerTests: XCTestCase {
         let downloadArchiveRequestHandler = downloadArchiveRequestHandler ?? { request, _ , completion in
             // meh
             let path = packagePath
-                .appending(components: ".build", "registry", "downloads", packageScope.description, packageName.description)
-                .appending(component: "\(packageVersion).zip")
+                .appending(components: ".build", "registry", "downloads", registryIdentity.scope.description, registryIdentity.name.description)
+                .appending("\(packageVersion).zip")
             try! fileSystem.createDirectory(path.parentDirectory, recursive: true)
             try! fileSystem.writeFileContents(path, string: "")
 
@@ -414,14 +440,14 @@ class RegistryPackageContainerTests: XCTestCase {
                         "Content-Version": "1",
                         "Content-Type": "application/zip"
                     ],
-                    body: "".data(using: .utf8)
+                    body: Data("".utf8)
                 )
             ))
         }
 
         let archiver = archiver ?? MockArchiver(handler: { archiver, from, to, completion in
             do {
-                try fileSystem.createDirectory(to.appending(component: "top"), recursive: true)
+                try fileSystem.createDirectory(to.appending("top"), recursive: true)
                 completion(.success(()))
             } catch {
                 completion(.failure(error))
@@ -432,8 +458,11 @@ class RegistryPackageContainerTests: XCTestCase {
             configuration: configuration!,
             fingerprintStorage: fingerprintStorage,
             fingerprintCheckingMode: .strict,
+            skipSignatureValidation: false,
+            signingEntityStorage: .none,
+            signingEntityCheckingMode: .strict,
             authorizationProvider: .none,
-            customHTTPClient: HTTPClient(configuration: .init(), handler: { request, progress , completion in
+            customHTTPClient: LegacyHTTPClient(configuration: .init(), handler: { request, progress , completion in
                 var pathComponents = request.url.pathComponents
                 if pathComponents.first == "/" {
                     pathComponents = Array(pathComponents.dropFirst())
@@ -441,10 +470,10 @@ class RegistryPackageContainerTests: XCTestCase {
                 guard pathComponents.count >= 2 else {
                     return completion(.failure(StringError("invalid url \(request.url)")))
                 }
-                guard pathComponents[0] == packageScope.description else {
+                guard pathComponents[0] == registryIdentity.scope.description else {
                     return completion(.failure(StringError("invalid url \(request.url)")))
                 }
-                guard pathComponents[1] == packageName.description else {
+                guard pathComponents[1] == registryIdentity.name.description else {
                     return completion(.failure(StringError("invalid url \(request.url)")))
                 }
 
@@ -461,21 +490,34 @@ class RegistryPackageContainerTests: XCTestCase {
                     completion(.failure(StringError("unexpected url \(request.url)")))
                 }
             }),
-            customArchiverProvider: { _ in archiver }
+            customArchiverProvider: { _ in archiver },
+            delegate: .none,
+            checksumAlgorithm: MockHashAlgorithm()
         )
     }
 
     private func manifestLink(_ identity: PackageIdentity, _ version: ToolsVersion) -> String {
-        guard let (scope, name) = identity.scopeAndName else {
-            preconditionFailure("invalid identity")
+        guard let registryIdentity = identity.registry else {
+            preconditionFailure("invalid registry identity: '\(identity)'")
         }
-        let versionString = version.patch == 0 ? "\(version.major).\(version.minor)" : version.description
-        return "<http://localhost/\(scope)/\(name)/\(version)/\(Manifest.filename)?swift-version=\(version)>; rel=\"alternate\"; filename=\"\(Manifest.basename)@swift-\(versionString).swift\"; swift-tools-version=\"\(version)\""
+        let versionString = if version.patch == 0 && version.minor == 0 {
+            "\(version.major)"
+        } else if version.patch == 0 {
+            "\(version.major).\(version.minor)"
+        } else {
+            version.description
+        }
+        return "<http://localhost/\(registryIdentity.scope)/\(registryIdentity.name)/\(version)/\(Manifest.filename)?swift-version=\(version)>; rel=\"alternate\"; filename=\"\(Manifest.basename)@swift-\(versionString).swift\"; swift-tools-version=\"\(version)\""
     }
 }
 
 extension PackageContainerProvider {
-    fileprivate func getContainer(for package: PackageReference, skipUpdate: Bool) throws -> PackageContainer {
-        try tsc_await { self.getContainer(for: package, skipUpdate: skipUpdate, observabilityScope: ObservabilitySystem.NOOP, on: .global(), completion: $0)  }
+    fileprivate func getContainer(for package: PackageReference, updateStrategy: ContainerUpdateStrategy = .always) async throws -> PackageContainer {
+        try await self.getContainer(
+            for: package,
+            updateStrategy: updateStrategy,
+            observabilityScope: ObservabilitySystem.NOOP,
+            on: .global()
+        )
     }
 }

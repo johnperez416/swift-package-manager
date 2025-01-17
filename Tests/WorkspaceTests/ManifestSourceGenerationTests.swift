@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2020-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2020-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -14,13 +14,26 @@ import Basics
 import PackageGraph
 import PackageLoading
 import PackageModel
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import Workspace
 import XCTest
 
-class ManifestSourceGenerationTests: XCTestCase {
+extension String {
+    fileprivate func nativePathString(escaped: Bool) -> String {
+#if _runtime(_ObjC)
+        return self
+#else
+        let fsr = self.fileSystemRepresentation
+        defer { fsr.deallocate() }
+        if escaped {
+            return String(cString: fsr).replacingOccurrences(of: "\\", with: "\\\\")
+        }
+        return String(cString: fsr)
+#endif
+    }
+}
 
+final class ManifestSourceGenerationTests: XCTestCase {
     /// Private function that writes the contents of a package manifest to a temporary package directory and then loads it, then serializes the loaded manifest back out again and loads it once again, after which it compares that no information was lost. Return the source of the newly generated manifest.
     @discardableResult
     private func testManifestWritingRoundTrip(
@@ -29,36 +42,36 @@ class ManifestSourceGenerationTests: XCTestCase {
         toolsVersionHeaderComment: String? = .none,
         additionalImportModuleNames: [String] = [],
         fs: FileSystem = localFileSystem
-    ) throws -> String {
-        try withTemporaryDirectory { packageDir in
+    ) async throws -> String {
+        try await withTemporaryDirectory { packageDir in
             let observability = ObservabilitySystem.makeForTesting()
 
             // Write the original manifest file contents, and load it.
             let manifestPath = packageDir.appending(component: Manifest.filename)
             try fs.writeFileContents(manifestPath, string: manifestContents)
-            let manifestLoader = ManifestLoader(toolchain: UserToolchain.default)
+            let manifestLoader = ManifestLoader(toolchain: try UserToolchain.default)
             let identityResolver = DefaultIdentityResolver()
-            let manifest = try tsc_await {
-                manifestLoader.load(
-                    manifestPath: manifestPath,
-                    manifestToolsVersion: toolsVersion,
-                    packageIdentity: .plain("Root"),
-                    packageKind: .root(packageDir),
-                    packageLocation: packageDir.pathString,
-                    packageVersion: nil,
-                    identityResolver: identityResolver,
-                    fileSystem: fs,
-                    observabilityScope: observability.topScope,
-                    delegateQueue: .sharedConcurrent,
-                    callbackQueue: .sharedConcurrent,
-                    completion: $0
-                )
-            }
+            let dependencyMapper = DefaultDependencyMapper(identityResolver: identityResolver)
+            let manifest = try await manifestLoader.load(
+                manifestPath: manifestPath,
+                manifestToolsVersion: toolsVersion,
+                packageIdentity: .plain("Root"),
+                packageKind: .root(packageDir),
+                packageLocation: packageDir.pathString,
+                packageVersion: nil,
+                identityResolver: identityResolver,
+                dependencyMapper: dependencyMapper,
+                fileSystem: fs,
+                observabilityScope: observability.topScope,
+                delegateQueue: .sharedConcurrent,
+                callbackQueue: .sharedConcurrent
+            )
 
             XCTAssertNoDiagnostics(observability.diagnostics)
 
             // Generate source code for the loaded manifest,
             let newContents = try manifest.generateManifestFileContents(
+                packageDirectory: packageDir,
                 toolsVersionHeaderComment: toolsVersionHeaderComment,
                 additionalImportModuleNames: additionalImportModuleNames)
 
@@ -68,22 +81,20 @@ class ManifestSourceGenerationTests: XCTestCase {
 
             // Write out the generated manifest to replace the old manifest file contents, and load it again.
             try fs.writeFileContents(manifestPath, string: newContents)
-            let newManifest = try tsc_await {
-                manifestLoader.load(
-                    manifestPath: manifestPath,
-                    manifestToolsVersion: toolsVersion,
-                    packageIdentity: .plain("Root"),
-                    packageKind: .root(packageDir),
-                    packageLocation: packageDir.pathString,
-                    packageVersion: nil,
-                    identityResolver: identityResolver,
-                    fileSystem: fs,
-                    observabilityScope: observability.topScope,
-                    delegateQueue: .sharedConcurrent,
-                    callbackQueue: .sharedConcurrent,
-                    completion: $0
-                )
-            }
+            let newManifest = try await manifestLoader.load(
+                manifestPath: manifestPath,
+                manifestToolsVersion: toolsVersion,
+                packageIdentity: .plain("Root"),
+                packageKind: .root(packageDir),
+                packageLocation: packageDir.pathString,
+                packageVersion: nil,
+                identityResolver: identityResolver,
+                dependencyMapper: dependencyMapper,
+                fileSystem: fs,
+                observabilityScope: observability.topScope,
+                delegateQueue: .sharedConcurrent,
+                callbackQueue: .sharedConcurrent
+            )
 
             XCTAssertNoDiagnostics(observability.diagnostics)
 
@@ -107,7 +118,7 @@ class ManifestSourceGenerationTests: XCTestCase {
         }
     }
 
-    func testBasics() throws {
+    func testBasics() async throws {
         let manifestContents = """
             // swift-tools-version:5.3
             // The swift-tools-version declares the minimum version of Swift required to build this package.
@@ -142,10 +153,49 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
     }
 
-    func testCustomPlatform() throws {
+    func testDynamicLibraryType() async throws {
+        let manifestContents = """
+            // swift-tools-version:5.3
+            // The swift-tools-version declares the minimum version of Swift required to build this package.
+
+            import PackageDescription
+
+            let package = Package(
+                name: "MyPackage",
+                platforms: [
+                    .macOS(.v10_14),
+                    .iOS(.v13)
+                ],
+                products: [
+                    // Products define the executables and libraries a package produces, and make them visible to other packages.
+                    .library(
+                        name: "MyPackage",
+                        type: .dynamic,
+                        targets: ["MyPackage"]),
+                ],
+                dependencies: [
+                    // Dependencies declare other packages that this package depends on.
+                    // .package(url: /* package url */, from: "1.0.0"),
+                ],
+                targets: [
+                    // Targets are the basic building blocks of a package. A target can define a module or a test suite.
+                    // Targets can depend on other targets in this package, and on products in packages this package depends on.
+                    .target(
+                        name: "MyPackage",
+                        dependencies: []),
+                    .testTarget(
+                        name: "MyPackageTests",
+                        dependencies: ["MyPackage"]),
+                ]
+            )
+            """
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+    }
+
+    func testCustomPlatform() async throws {
         let manifestContents = """
             // swift-tools-version:5.6
             // The swift-tools-version declares the minimum version of Swift required to build this package.
@@ -179,10 +229,10 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_6)
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_6)
     }
 
-    func testAdvancedFeatures() throws {
+    func testAdvancedFeatures() async throws {
         let manifestContents = """
             // swift-tools-version:5.3
             // The swift-tools-version declares the minimum version of Swift required to build this package.
@@ -228,38 +278,50 @@ class ManifestSourceGenerationTests: XCTestCase {
                 cxxLanguageStandard: .cxx11
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
     }
 
-    func testPackageDependencyVariations() throws {
+    func testPackageDependencyVariations() async throws {
         let manifestContents = """
             // swift-tools-version:5.4
             import PackageDescription
 
+            #if os(Windows)
+            let absolutePath = "file:///C:/Users/user/SourceCache/path/to/MyPkg16"
+            #else
+            let absolutePath = "file:///path/to/MyPkg16"
+            #endif
+
             let package = Package(
                 name: "MyPackage",
                 dependencies: [
-                   .package(url: "/foo1", from: "1.0.0"),
-                   .package(url: "/foo2", .revision("58e9de4e7b79e67c72a46e164158e3542e570ab6")),
-                   .package(path: "../foo3"),
-                   .package(path: "/path/to/foo4"),
-                   .package(url: "/foo5", .exact("1.2.3")),
-                   .package(url: "/foo6", "1.2.3"..<"2.0.0"),
-                   .package(url: "/foo7", .branch("master")),
-                   .package(url: "/foo8", .upToNextMinor(from: "1.3.4")),
-                   .package(url: "/foo9", .upToNextMajor(from: "1.3.4")),
-                   .package(path: "~/path/to/foo10"),
-                   .package(path: "~foo11"),
-                   .package(path: "~/path/to/~/foo12"),
+                   .package(url: "https://example.com/MyPkg1", from: "1.0.0"),
+                   .package(url: "https://example.com/MyPkg2", .revision("58e9de4e7b79e67c72a46e164158e3542e570ab6")),
+                   .package(url: "https://example.com/MyPkg5", .exact("1.2.3")),
+                   .package(url: "https://example.com/MyPkg6", "1.2.3"..<"2.0.0"),
+                   .package(url: "https://example.com/MyPkg7", .branch("main")),
+                   .package(url: "https://example.com/MyPkg8", .upToNextMinor(from: "1.3.4")),
+                   .package(url: "ssh://git@example.com/MyPkg9", .branch("my branch with spaces")),
+                   .package(url: "../MyPkg10", from: "0.1.0"),
+                   .package(path: "../MyPkg11"),
+                   .package(path: "packages/path/to/MyPkg12"),
+                   .package(path: "~/path/to/MyPkg13"),
+                   .package(path: "~MyPkg14"),
+                   .package(path: "~/path/to/~/MyPkg15"),
                    .package(path: "~"),
-                   .package(path: "file:///path/to/foo13"),
+                   .package(path: absolutePath),
                 ]
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+        let newContents = try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+
+        // Check some things about the contents of the manifest.
+        XCTAssertTrue(newContents.contains("url: \"\("../MyPkg10".nativePathString(escaped: true))\""), newContents)
+        XCTAssertTrue(newContents.contains("path: \"\("../MyPkg11".nativePathString(escaped: true))\""), newContents)
+        XCTAssertTrue(newContents.contains("path: \"\("packages/path/to/MyPkg12".nativePathString(escaped: true))"), newContents)
     }
 
-    func testResources() throws {
+    func testResources() async throws {
         let manifestContents = """
             // swift-tools-version:5.3
             import PackageDescription
@@ -290,10 +352,10 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
     }
 
-    func testBuildSettings() throws {
+    func testBuildSettings() async throws {
         let manifestContents = """
             // swift-tools-version:5.3
             import PackageDescription
@@ -326,10 +388,10 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_3)
     }
 
-    func testPluginTargets() throws {
+    func testPluginTargets() async throws {
         let manifestContents = """
             // swift-tools-version:5.5
             import PackageDescription
@@ -348,10 +410,10 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_5)
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_5)
     }
 
-    func testCustomToolsVersionHeaderComment() throws {
+    func testCustomToolsVersionHeaderComment() async throws {
         let manifestContents = """
             // swift-tools-version:5.5
             import PackageDescription
@@ -370,12 +432,12 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        let newContents = try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_5, toolsVersionHeaderComment: "a comment")
+        let newContents = try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_5, toolsVersionHeaderComment: "a comment")
 
         XCTAssertTrue(newContents.hasPrefix("// swift-tools-version: 5.5; a comment\n"), "contents: \(newContents)")
     }
 
-    func testAdditionalModuleImports() throws {
+    func testAdditionalModuleImports() async throws {
         let manifestContents = """
             // swift-tools-version:5.5
             import PackageDescription
@@ -390,18 +452,72 @@ class ManifestSourceGenerationTests: XCTestCase {
                 ]
             )
             """
-        let newContents = try testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_5, additionalImportModuleNames: ["Foundation"])
+        let newContents = try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_5, additionalImportModuleNames: ["Foundation"])
 
         XCTAssertTrue(newContents.contains("import Foundation\n"), "contents: \(newContents)")
     }
 
+    func testLatestPlatformVersions() async throws {
+        let manifestContents = """
+            // swift-tools-version: 5.9
+            // The swift-tools-version declares the minimum version of Swift required to build this package.
+
+            import PackageDescription
+
+            let package = Package(
+                name: "MyPackage",
+                platforms: [
+                    .macOS(.v14),
+                    .iOS(.v17),
+                    .tvOS(.v17),
+                    .watchOS(.v10),
+                    .visionOS(.v1),
+                    .macCatalyst(.v17),
+                    .driverKit(.v23)
+                ],
+                targets: [
+                ]
+            )
+            """
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_9)
+    }
+
+    func testTargetPlatformConditions() async throws {
+        let manifestContents = """
+            // swift-tools-version: 5.9
+            // The swift-tools-version declares the minimum version of Swift required to build this package.
+
+            import PackageDescription
+
+            let package = Package(
+                name: "MyPackage",
+                targets: [
+                    .target(
+                        name: "MyExe",
+                        dependencies: [
+                            .target(name: "MyLib", condition: .when(platforms: [
+                                .macOS, .macCatalyst, .iOS, .tvOS, .watchOS, .visionOS,
+                                .driverKit, .linux, .windows, .android, .wasi, .openbsd
+                            ]))
+                        ]
+                    ),
+                    .target(
+                        name: "MyLib"
+                    ),
+                ]
+            )
+            """
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_9)
+    }
+    
     func testCustomProductSourceGeneration() throws {
         // Create a manifest containing a product for which we'd like to do custom source fragment generation.
-        let manifest = Manifest(
+        let packageDir = AbsolutePath("/tmp/MyLibrary")
+        let manifest = Manifest.createManifest(
             displayName: "MyLibrary",
-            path: AbsolutePath("/tmp/MyLibrary/Package.swift"),
-            packageKind: .root(AbsolutePath("/tmp/MyLibrary")),
-            packageLocation: "/tmp/MyLibrary",
+            path: packageDir.appending("Package.swift"),
+            packageKind: .root("/tmp/MyLibrary"),
+            packageLocation: packageDir.pathString,
             platforms: [],
             toolsVersion: .v5_5,
             products: [
@@ -410,7 +526,7 @@ class ManifestSourceGenerationTests: XCTestCase {
         )
 
         // Generate the manifest contents, using a custom source generator for the product type.
-        let contents = manifest.generateManifestFileContents(customProductTypeSourceGenerator: { product in
+        let contents = manifest.generateManifestFileContents(packageDirectory: packageDir, customProductTypeSourceGenerator: { product in
             // This example handles library types in a custom way, for testing purposes.
             var params: [SourceCodeFragment] = []
             params.append(SourceCodeFragment(key: "name", string: product.name))
@@ -433,14 +549,14 @@ class ManifestSourceGenerationTests: XCTestCase {
         XCTAssertTrue(contents.contains(".library(name: \"Foo\", targets: [\"Bar\"], type: .static)"), "contents: \(contents)")
     }
 
-    func testModuleAliasGeneration() throws {
+    func testModuleAliasGeneration() async throws {
         let manifest = Manifest.createRootManifest(
-            name: "thisPkg",
-            path: .init("/thisPkg"),
+            displayName: "thisPkg",
+            path: "/thisPkg",
             toolsVersion: .v5_7,
             dependencies: [
-                .localSourceControl(path: .init("/fooPkg"), requirement: .upToNextMajor(from: "1.0.0")),
-                .localSourceControl(path: .init("/barPkg"), requirement: .upToNextMajor(from: "2.0.0")),
+                .localSourceControl(path: "/fooPkg", requirement: .upToNextMajor(from: "1.0.0")),
+                .localSourceControl(path: "/barPkg", requirement: .upToNextMajor(from: "2.0.0")),
             ],
             targets: [
                 try TargetDescription(name: "exe",
@@ -456,7 +572,7 @@ class ManifestSourceGenerationTests: XCTestCase {
                                                 ]),
                 try TargetDescription(name: "Logging", dependencies: []),
             ])
-        let contents = manifest.generatedManifestFileContents
+        let contents = try manifest.generateManifestFileContents(packageDirectory: manifest.path.parentDirectory)
         let parts =
         """
             dependencies: [
@@ -474,6 +590,76 @@ class ManifestSourceGenerationTests: XCTestCase {
         let isContained = trimmedParts.allSatisfy(trimmedContents.contains(_:))
         XCTAssertTrue(isContained)
 
-        try testManifestWritingRoundTrip(manifestContents: contents, toolsVersion: .vNext)
+        try await testManifestWritingRoundTrip(manifestContents: contents, toolsVersion: .v5_8)
+    }
+
+    func testUpcomingAndExperimentalFeatures() async throws {
+        let manifestContents = """
+            // swift-tools-version:5.8
+            import PackageDescription
+
+            let package = Package(
+                name: "UpcomingAndExperimentalFeatures",
+                targets: [
+                    .target(
+                        name: "MyTool",
+                        swiftSettings: [
+                            .enableUpcomingFeature("UpcomingFeatureOne"),
+                            .enableUpcomingFeature("UpcomingFeatureTwo"),
+                            .enableExperimentalFeature("ExperimentalFeature")
+                        ]
+                    ),
+                ]
+            )
+            """
+        try await testManifestWritingRoundTrip(manifestContents: manifestContents, toolsVersion: .v5_8)
+    }
+
+    func testPluginNetworkingPermissionGeneration() async throws {
+        let manifest = Manifest.createRootManifest(
+            displayName: "thisPkg",
+            path: "/thisPkg",
+            toolsVersion: .v5_9,
+            dependencies: [],
+            targets: [
+                try TargetDescription(name: "MyPlugin", type: .plugin, pluginCapability: .command(intent: .custom(verb: "foo", description: "bar"), permissions: [.allowNetworkConnections(scope: .all(ports: [23, 42, 443, 8080]), reason: "internet good")]))
+            ])
+        let contents = try manifest.generateManifestFileContents(packageDirectory: manifest.path.parentDirectory)
+        try await testManifestWritingRoundTrip(manifestContents: contents, toolsVersion: .v5_9)
+    }
+
+    func testManifestGenerationWithSwiftLanguageMode() async throws {
+        try UserToolchain.default.skipUnlessAtLeastSwift6()
+        let manifest = Manifest.createRootManifest(
+            displayName: "pkg",
+            path: "/pkg",
+            toolsVersion: .v6_0,
+            dependencies: [],
+            targets: [
+                try TargetDescription(
+                    name: "v5",
+                    type: .executable,
+                    settings: [
+                        .init(tool: .swift, kind: .swiftLanguageMode(.v6))
+                    ]
+                ),
+                try TargetDescription(
+                    name: "custom",
+                    type: .executable,
+                    settings: [
+                        .init(tool: .swift, kind: .swiftLanguageMode(.init(string: "5.10")!))
+                    ]
+                ),
+                try TargetDescription(
+                    name: "conditional",
+                    type: .executable,
+                    settings: [
+                        .init(tool: .swift, kind: .swiftLanguageMode(.v5), condition: .init(platformNames: ["linux"])),
+                        .init(tool: .swift, kind: .swiftLanguageMode(.v4), condition: .init(platformNames: ["macos"], config: "debug"))
+                    ]
+                )
+            ])
+        let contents = try manifest.generateManifestFileContents(packageDirectory: manifest.path.parentDirectory)
+        try await testManifestWritingRoundTrip(manifestContents: contents, toolsVersion: .v6_0)
     }
 }

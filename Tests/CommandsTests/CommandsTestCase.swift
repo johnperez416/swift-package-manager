@@ -10,7 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-import TSCBasic
+import Basics
 import XCTest
 
 class CommandsTestCase: XCTestCase {
@@ -23,7 +23,7 @@ class CommandsTestCase: XCTestCase {
     }
     
     override func tearDown() {
-        if let originalWorkingDirectory = originalWorkingDirectory {
+        if let originalWorkingDirectory {
             try? localFileSystem.changeCurrentWorkingDirectory(to: originalWorkingDirectory)
         }
     }

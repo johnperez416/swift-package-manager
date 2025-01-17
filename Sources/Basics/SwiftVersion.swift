@@ -10,9 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if USE_IMPL_ONLY_IMPORTS
 @_implementationOnly import TSCclibc
+#else
+private import TSCclibc
+#endif
 
-public struct SwiftVersion {
+public struct SwiftVersion: Sendable {
     /// The version number.
     public var version: (major: Int, minor: Int, patch: Int)
 
@@ -23,11 +27,11 @@ public struct SwiftVersion {
     public var buildIdentifier: String?
 
     /// The major component of the version number.
-    public var major: Int { return self.version.major }
+    public var major: Int { self.version.major }
     /// The minor component of the version number.
-    public var minor: Int { return self.version.minor }
+    public var minor: Int { self.version.minor }
     /// The patch component of the version number.
-    public var patch: Int { return self.version.patch }
+    public var patch: Int { self.version.patch }
 
     /// The version as a readable string.
     public var displayString: String {
@@ -35,7 +39,7 @@ public struct SwiftVersion {
         if self.isDevelopment {
             result += "-dev"
         }
-        if let buildIdentifier = self.buildIdentifier {
+        if let buildIdentifier {
             result += " (" + buildIdentifier + ")"
         }
         return result
@@ -54,7 +58,7 @@ public struct SwiftVersion {
 extension SwiftVersion {
     /// The current version of the package manager.
     public static let current = SwiftVersion(
-        version: (5, 7, 0),
+        version: (6, 2, 0),
         isDevelopment: true,
         buildIdentifier: getBuildIdentifier()
     )

@@ -19,6 +19,7 @@ final class BasicTests: XCTestCase {
 
     func testExamplePackageDealer() throws {
         try XCTSkipIf(isSelfHosted, "These packages don't use the latest runtime library, which doesn't work with self-hosted builds.")
+        try skipUnlessAtLeastSwift6()
 
         try withTemporaryDirectory { tempDir in
             let packagePath = tempDir.appending(component: "dealer")
@@ -28,7 +29,7 @@ final class BasicTests: XCTestCase {
             XCTAssertMatch(build1Output, .contains("Build complete"))
 
             // Verify that the app works.
-            let dealerOutput = try sh(AbsolutePath(".build/debug/dealer", relativeTo: packagePath), "10").stdout
+            let dealerOutput = try sh(AbsolutePath(validating: ".build/debug/dealer", relativeTo: packagePath), "10").stdout
             XCTAssertEqual(dealerOutput.filter(\.isPlayingCardSuit).count, 10)
 
             // Verify that the 'git status' is clean after a build.
@@ -93,9 +94,7 @@ final class BasicTests: XCTestCase {
     }
 
     func testSwiftPackageInitExec() throws {
-        #if swift(<5.5)
-        try XCTSkipIf(true, "skipping because host compiler doesn't support '-entry-point-function-name'")
-        #endif
+        try skipUnlessAtLeastSwift6()
 
         try withTemporaryDirectory { tempDir in
             // Create a new package with an executable target.
@@ -122,9 +121,7 @@ final class BasicTests: XCTestCase {
     }
 
     func testSwiftPackageInitExecTests() throws {
-        #if swift(<5.5)
-        try XCTSkipIf(true, "skipping because host compiler doesn't support '-entry-point-function-name'")
-        #endif
+        try skipUnlessAtLeastSwift6()
 
         try XCTSkip("FIXME: swift-test invocations are timing out in Xcode and self-hosted CI")
 
@@ -149,6 +146,8 @@ final class BasicTests: XCTestCase {
     }
 
     func testSwiftPackageInitLib() throws {
+        try skipUnlessAtLeastSwift6()
+
         try withTemporaryDirectory { tempDir in
             // Create a new package with an executable target.
             let packagePath = tempDir.appending(component: "Project")
@@ -167,6 +166,8 @@ final class BasicTests: XCTestCase {
     }
 
     func testSwiftPackageLibsTests() throws {
+        try skipUnlessAtLeastSwift6()
+
         try XCTSkip("FIXME: swift-test invocations are timing out in Xcode and self-hosted CI")
 
         try withTemporaryDirectory { tempDir in
@@ -215,7 +216,7 @@ final class BasicTests: XCTestCase {
 
             // Check the build.
             let buildOutput = try sh(swiftBuild, "--package-path", packagePath, "-v").stdout
-            XCTAssertMatch(buildOutput, .regex(#"swiftc.* -module-name special_tool .* ".*/more spaces/special tool/some file.swift""#))
+            XCTAssertMatch(buildOutput, .regex(#"swiftc.* -module-name special_tool .* '@.*/more spaces/special tool/.build/[^/]+/debug/special_tool.build/sources'"#))
             XCTAssertMatch(buildOutput, .contains("Build complete"))
 
             // Verify that the tool exists and works.
@@ -225,20 +226,18 @@ final class BasicTests: XCTestCase {
     }
 
     func testSwiftRun() throws {
-        #if swift(<5.5)
-        try XCTSkipIf(true, "skipping because host compiler doesn't support '-entry-point-function-name'")
-        #endif
+        try skipUnlessAtLeastSwift6()
 
         try withTemporaryDirectory { tempDir in
             let packagePath = tempDir.appending(component: "secho")
             try localFileSystem.createDirectory(packagePath)
             try sh(swiftPackage, "--package-path", packagePath, "init", "--type", "executable")
             // delete any files generated
-            for entry in try localFileSystem.getDirectoryContents(packagePath.appending(components: "Sources", "secho")) {
-                try localFileSystem.removeFileTree(packagePath.appending(components: "Sources", "secho", entry))
+            for entry in try localFileSystem.getDirectoryContents(packagePath.appending(components: "Sources")) {
+                try localFileSystem.removeFileTree(packagePath.appending(components: "Sources", entry))
             }
             try localFileSystem.writeFileContents(
-                packagePath.appending(components: "Sources", "secho", "main.swift"),
+                packagePath.appending(components: "Sources", "secho.swift"),
                 bytes: ByteString(encodingAsUTF8: """
                     import Foundation
                     print(CommandLine.arguments.dropFirst().joined(separator: " "))
@@ -249,13 +248,15 @@ final class BasicTests: XCTestCase {
             XCTAssertContents(runError) { checker in
                 checker.check(.regex("Compiling .*secho.*"))
                 checker.check(.regex("Linking .*secho"))
-                checker.check(.contains("Build complete"))
+                checker.check(.contains("Build of product 'secho' complete"))
             }
             XCTAssertEqual(runOutput, "1 \"two\"\n")
         }
     }
 
     func testSwiftTest() throws {
+        try skipUnlessAtLeastSwift6()
+
         try XCTSkip("FIXME: swift-test invocations are timing out in Xcode and self-hosted CI")
 
         try withTemporaryDirectory { tempDir in
@@ -376,4 +377,10 @@ private extension Character {
             return false
         }
     }
+}
+
+private func skipUnlessAtLeastSwift6() throws {
+    #if compiler(<6.0)
+    try XCTSkipIf(true, "Skipping because test requires at least Swift 6.0")
+    #endif
 }

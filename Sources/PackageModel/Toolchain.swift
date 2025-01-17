@@ -10,7 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-import TSCBasic
+import Basics
 
 public protocol Toolchain {
     /// Path of the librarian.
@@ -19,8 +19,29 @@ public protocol Toolchain {
     /// Path of the `swiftc` compiler.
     var swiftCompilerPath: AbsolutePath { get }
 
+    /// Path to `lib/swift`
+    var swiftResourcesPath: AbsolutePath? { get }
+
+    /// Path to `lib/swift_static`
+    var swiftStaticResourcesPath: AbsolutePath? { get }
+
     /// Path containing the macOS Swift stdlib.
-    var macosSwiftStdlib: AbsolutePath { get }
+    var macosSwiftStdlib: AbsolutePath { get throws }
+
+    /// An array of paths to search for headers and modules at compile time.
+    var includeSearchPaths: [AbsolutePath] { get }
+
+    /// An array of paths to search for libraries at link time.
+    var librarySearchPaths: [AbsolutePath] { get }
+
+    /// Configuration from the used toolchain.
+    var installedSwiftPMConfiguration: InstalledSwiftPMConfiguration { get }
+
+    /// The root path to the Swift SDK used by this toolchain.
+    var sdkRootPath: AbsolutePath? { get }
+
+    /// The manifest and library locations used by this toolchain.
+    var swiftPMLibrariesLocation: ToolchainConfiguration.SwiftPMLibrariesLocation { get }
 
     /// Path of the `clang` compiler.
     func getClangCompiler() throws -> AbsolutePath
@@ -29,14 +50,20 @@ public protocol Toolchain {
     // the OSS clang compiler. This API should not used for any other purpose.
     /// Returns true if clang compiler's vendor is Apple and nil if unknown.
     func _isClangCompilerVendorApple() throws -> Bool?
+    
+    /// Additional flags to be passed to the build tools.
+    var extraFlags: BuildFlags { get }
 
     /// Additional flags to be passed to the C compiler.
+    @available(*, deprecated, message: "use extraFlags.cCompilerFlags instead")
     var extraCCFlags: [String] { get }
 
     /// Additional flags to be passed to the Swift compiler.
+    @available(*, deprecated, message: "use extraFlags.swiftCompilerFlags instead")
     var extraSwiftCFlags: [String] { get }
 
-    /// Additional flags to be passed when compiling with C++.
+    /// Additional flags to be passed to the C++ compiler.
+    @available(*, deprecated, message: "use extraFlags.cxxCompilerFlags instead")
     var extraCPPFlags: [String] { get }
 }
 
@@ -45,12 +72,50 @@ extension Toolchain {
         return nil
     }
 
-    public var macosSwiftStdlib: AbsolutePath { 
-        return AbsolutePath("../../lib/swift/macosx", relativeTo: resolveSymlinks(swiftCompilerPath))
+    public var hostLibDir: AbsolutePath {
+        get throws {
+            try Self.toolchainLibDir(swiftCompilerPath: self.swiftCompilerPath).appending(
+                components: ["swift", "host"]
+            )
+        }
+    }
+
+    public var macosSwiftStdlib: AbsolutePath {
+        get throws {
+            try Self.toolchainLibDir(swiftCompilerPath: self.swiftCompilerPath).appending(
+                components: ["swift", "macosx"]
+            )
+        }
     }
 
     public var toolchainLibDir: AbsolutePath {
-        // FIXME: Not sure if it's better to base this off of Swift compiler or our own binary.
-        return AbsolutePath("../../lib", relativeTo: resolveSymlinks(swiftCompilerPath))
+        get throws {
+            // FIXME: Not sure if it's better to base this off of Swift compiler or our own binary.
+            try Self.toolchainLibDir(swiftCompilerPath: self.swiftCompilerPath)
+        }
+    }
+
+    /// Returns the appropriate Swift resources directory path.
+    ///
+    /// - Parameter static: Controls whether to use the static or dynamic
+    /// resources directory.
+    public func swiftResourcesPath(isStatic: Bool) -> AbsolutePath? {
+        isStatic ? swiftStaticResourcesPath : swiftResourcesPath
+    }
+
+    public var extraCCFlags: [String] {
+        extraFlags.cCompilerFlags
+    }
+    
+    public var extraCPPFlags: [String] {
+        extraFlags.cxxCompilerFlags
+    }
+    
+    public var extraSwiftCFlags: [String] {
+        extraFlags.swiftCompilerFlags
+    }
+
+    package static func toolchainLibDir(swiftCompilerPath: AbsolutePath) throws -> AbsolutePath {
+        try AbsolutePath(validating: "../../lib", relativeTo: resolveSymlinks(swiftCompilerPath))
     }
 }

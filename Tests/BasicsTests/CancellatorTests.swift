@@ -11,9 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 @testable import Basics
-import TSCBasic
+import _InternalTestSupport
 import XCTest
-import SPMTestSupport
+
+import class Basics.AsyncProcess
 
 final class CancellatorTests: XCTestCase {
     func testHappyCase() throws {
@@ -46,23 +47,24 @@ final class CancellatorTests: XCTestCase {
     func testTSCProcess() throws {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
-            let scriptPath = temporaryDirectory.appending(component: "script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            let scriptPath = temporaryDirectory.appending("script")
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 echo "process started"
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
 
             // outputRedirection used to signal that the process started
             let startSemaphore = ProcessStartedSemaphore(term: "process started")
-            let process = TSCBasic.Process(
+            let process = AsyncProcess(
                 arguments: ["bash", scriptPath.pathString],
                 outputRedirection: .stream(
                     stdout: startSemaphore.handleOutput,
@@ -104,9 +106,10 @@ final class CancellatorTests: XCTestCase {
     func testTSCProcessForceKill() throws {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
-            let scriptPath = temporaryDirectory.appending(component: "script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            let scriptPath = temporaryDirectory.appending("script")
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 trap_handler() {
@@ -122,14 +125,14 @@ final class CancellatorTests: XCTestCase {
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
 
             // outputRedirection used to signal that the process SIGINT traps have been set up
             let startSemaphore = ProcessStartedSemaphore(term: "trap installed")
-            let process = TSCBasic.Process(
+            let process = AsyncProcess(
                 arguments: ["bash", scriptPath.pathString],
                 outputRedirection: .stream(
                     stdout: startSemaphore.handleOutput,
@@ -170,9 +173,10 @@ final class CancellatorTests: XCTestCase {
     func testFoundationProcess() throws {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
-            let scriptPath = temporaryDirectory.appending(component: "script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            let scriptPath = temporaryDirectory.appending("script")
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 echo "process started"
@@ -180,7 +184,7 @@ final class CancellatorTests: XCTestCase {
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
@@ -232,9 +236,10 @@ final class CancellatorTests: XCTestCase {
     func testFoundationProcessForceKill() throws {
 #if os(macOS)
         try withTemporaryDirectory { temporaryDirectory in
-            let scriptPath = temporaryDirectory.appending(component: "script")
-            try localFileSystem.writeFileContents(scriptPath) {
-                """
+            let scriptPath = temporaryDirectory.appending("script")
+            try localFileSystem.writeFileContents(
+                scriptPath,
+                string: """
                 set -e
 
                 trap_handler() {
@@ -250,7 +255,7 @@ final class CancellatorTests: XCTestCase {
                 sleep 10
                 echo "exit normally"
                 """
-            }
+            )
 
             let observability = ObservabilitySystem.makeForTesting()
             let cancellator = Cancellator(observabilityScope: observability.topScope)
@@ -343,6 +348,7 @@ final class CancellatorTests: XCTestCase {
         struct Worker {
             func work()  {}
 
+            @Sendable
             func cancel() {
                 Thread.sleep(forTimeInterval: 5)
             }
@@ -386,6 +392,7 @@ fileprivate struct Worker {
         return self.semaphore.wait(timeout: deadline)
     }
 
+    @Sendable
     func cancel() {
         print("\(self.name) cancel")
         self.semaphore.signal()

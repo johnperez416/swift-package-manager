@@ -53,33 +53,42 @@ final class SwiftPMTests: XCTestCase {
         #if !os(macOS)
         try XCTSkip("Test requires macOS")
         #endif
+        #if swift(<6.0)
+        try XCTSkipIf(true, "Skipping because test requires at least Swift 6.0")
+        #endif
 
         try withTemporaryDirectory { tmpDir in
             let packagePath = tmpDir.appending(component: "foo")
             try localFileSystem.createDirectory(packagePath)
             try sh(swiftPackage, "--package-path", packagePath, "init", "--type", "executable")
             // delete any files generated
-            for entry in try localFileSystem.getDirectoryContents(packagePath.appending(components: "Sources", "foo")) {
-                try localFileSystem.removeFileTree(packagePath.appending(components: "Sources", "foo", entry))
+            for entry in try localFileSystem.getDirectoryContents(packagePath.appending(components: "Sources")) {
+                try localFileSystem.removeFileTree(packagePath.appending(components: "Sources", entry))
             }
-            try localFileSystem.writeFileContents(AbsolutePath("Sources/foo/main.m", relativeTo: packagePath)) {
-                $0 <<< "int main() {}"
+            try localFileSystem.writeFileContents(AbsolutePath(validating: "Sources/main.m", relativeTo: packagePath)) {
+                $0.send("int main() {}")
             }
             let archs = ["x86_64", "arm64"]
 
             for arch in archs {
                 try sh(swiftBuild, "--package-path", packagePath, "--arch", arch)
-                let fooPath = AbsolutePath(".build/\(arch)-apple-macosx/debug/foo", relativeTo: packagePath)
+                let fooPath = try AbsolutePath(
+                    validating: ".build/\(arch)-apple-macosx/debug/foo",
+                    relativeTo: packagePath
+                )
                 XCTAssertFileExists(fooPath)
             }
 
             let args = [swiftBuild.pathString, "--package-path", packagePath.pathString] + archs.flatMap{ ["--arch", $0] }
             try _sh(args)
 
-            let fooPath = AbsolutePath(".build/apple/Products/Debug/foo", relativeTo: packagePath)
+            let fooPath = try AbsolutePath(validating: ".build/apple/Products/Debug/foo", relativeTo: packagePath)
             XCTAssertFileExists(fooPath)
 
-            let objectsDir = AbsolutePath(".build/apple/Intermediates.noindex/foo.build/Debug/foo.build/Objects-normal", relativeTo: packagePath)
+            let objectsDir = try AbsolutePath(
+                validating: ".build/apple/Intermediates.noindex/foo.build/Debug/foo.build/Objects-normal",
+                relativeTo: packagePath
+            )
             for arch in archs {
                 XCTAssertDirectoryExists(objectsDir.appending(component: arch))
             }

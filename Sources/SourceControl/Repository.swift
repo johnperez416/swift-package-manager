@@ -10,12 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-import Foundation
-import TSCBasic
 import Basics
+import Foundation
 
 /// Specifies a repository address.
-public struct RepositorySpecifier: Hashable {
+public struct RepositorySpecifier: Hashable, Sendable {
     public let location: Location
 
     public init(location: Location) {
@@ -28,30 +27,35 @@ public struct RepositorySpecifier: Hashable {
     }
 
     /// Create a specifier on a URL.
-    public init(url: URL) {
+    public init(url: SourceControlURL) {
         self.init(location: .url(url))
     }
 
-    /// The location of the repository as URL.
-    public var url: URL {
+    /// The location of the repository as string.
+    public var url: String {
         switch self.location {
-        case .path(let path): return URL(fileURLWithPath: path.pathString)
-        case .url(let url): return url
+        case .path(let path): return path.pathString
+        case .url(let url): return url.absoluteString
         }
     }
 
     /// Returns the cleaned basename for the specifier.
     public var basename: String {
-        var basename = self.url.pathComponents.dropFirst(1).last(where: { !$0.isEmpty }) ?? ""
+        // FIXME: this might be wrong
+        //var basename = self.url.pathComponents.dropFirst(1).last(where: { !$0.isEmpty }) ?? ""
+        var basename = (self.url as NSString).lastPathComponent
         if basename.hasSuffix(".git") {
             basename = String(basename.dropLast(4))
+        }
+        if basename == "/" {
+            return ""
         }
         return basename
     }
 
-    public enum Location: Hashable, CustomStringConvertible {
+    public enum Location: Hashable, CustomStringConvertible, Sendable {
         case path(AbsolutePath)
-        case url(URL)
+        case url(SourceControlURL)
 
         public var description: String {
             switch self {
@@ -84,9 +88,6 @@ public protocol RepositoryProvider: Cancellable {
     ///   - progress: Reports the progress of the current fetch operation.
     /// - Throws: If there is any error fetching the repository.
     func fetch(repository: RepositorySpecifier, to path: AbsolutePath, progressHandler: FetchProgress.Handler?) throws
-
-    /// Returns true if a  repository exists at `path`
-    func repositoryExists(at path: AbsolutePath) throws -> Bool
 
     /// Open the given repository.
     ///
@@ -139,10 +140,10 @@ public protocol RepositoryProvider: Cancellable {
     func copy(from sourcePath: AbsolutePath, to destinationPath: AbsolutePath) throws
 
     /// Returns true if the directory is valid git location.
-    func isValidDirectory(_ directory: AbsolutePath) -> Bool
+    func isValidDirectory(_ directory: AbsolutePath) throws -> Bool
 
-    /// Returns true if the git reference name is well formed.
-    func isValidRefFormat(_ ref: String) -> Bool
+    /// Returns true if the directory is valid git location for the specified repository
+    func isValidDirectory(_ directory: AbsolutePath, for repository: RepositorySpecifier) throws -> Bool
 }
 
 /// Abstract repository operations.
@@ -250,7 +251,7 @@ public protocol WorkingCheckout {
     func hasUnpushedCommits() throws -> Bool
 
     /// This check for any modified state of the repository and returns true
-    /// if there are uncommited changes.
+    /// if there are uncommitted changes.
     func hasUncommittedChanges() -> Bool
 
     /// Check out the given tag.
@@ -268,7 +269,7 @@ public protocol WorkingCheckout {
     func checkout(newBranch: String) throws
 
     /// Returns true if there is an alternative store in the checkout and it is valid.
-    func isAlternateObjectStoreValid() -> Bool
+    func isAlternateObjectStoreValid(expected: AbsolutePath) -> Bool
 
     /// Returns true if the file at `path` is ignored by `git`
     func areIgnored(_ paths: [AbsolutePath]) throws -> [Bool]

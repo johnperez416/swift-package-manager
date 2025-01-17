@@ -2,7 +2,7 @@
 
 There are several types of contributions one can make. Bug fixes, documentation and enhancements that do not materially change the user facing semantics of Swift Package Manager should be submitted directly as PR.
 
-Larger changes that do materially change the semantics of Swift Package Manager (e.g. changes to the manifest format or behavior) are required to go through [Swift Evolution Process](https://github.com/apple/swift-evolution/blob/master/process.md).
+Larger changes that do materially change the semantics of Swift Package Manager (e.g. changes to the manifest format or behavior) are required to go through [Swift Evolution Process](https://github.com/swiftlang/swift-evolution/blob/master/process.md).
 
 To see how previous evolution decisions for SwiftPM have been made and have some direction for the development of future features please check out the [Community Proposals](https://forums.swift.org/tag/packagemanager).
 
@@ -10,15 +10,18 @@ For more information about making contributions to the Swift project in general 
 
 ## Reporting issues
 
-Issues are tracked using [SwiftPM JIRA Bug Tracker](https://bugs.swift.org/browse/SR-13640?jql=component%20%3D%20%22Package%20Manager%22).
+Issues are tracked using [SwiftPM GitHub Issue Tracker](https://github.com/swiftlang/swift-package-manager/issues).
 
 Fill the following fields:
 
-* `Summary`: A one line summary of the problem you're facing
-* `Description`: The complete description of the problem. Be specific and clearly mention the steps to reproduce the bug
-* `Environment`: The Operating System, Xcode version (`$ xcodebuild -version`), Toolchain, and `swift build` version (`$ swift build --version`)
-* `Component/s`: Package Manager
-* `Attachment`: Relevant files like logs, project files, etc.
+* `Title`: A one line summary of the problem you're facing.
+* `Description`: The complete description of the problem. Be specific.
+* `Expected behavior`: How you expect SwiftPM to behave. 
+* `Actual behavior` : What actually happens.
+* `Steps to reproduce`: Be specific, provide steps to reproduce the bug.
+* `Swift Package Manager version/commit hash` : With which version are you testing.
+* `Actual behavior` : What actually happens.
+* `Swift & OS version` : (output of `swift --version && uname -a`).
 
 Please include a minimal example package which can reproduce the issue. The
 sample package can be attached with the report or you can include the URL of the
@@ -34,7 +37,7 @@ generated and the Xcode build log.
 
 ## Setting up the development environment
 
-First, clone a copy of SwiftPM code from https://github.com/apple/swift-package-manager.
+First, clone a copy of SwiftPM code from https://github.com/swiftlang/swift-package-manager.
 
 If you are preparing to make a contribution you should fork the repository first and clone the fork which will make opening Pull Requests easier. See "Creating Pull Requests" section below.
 
@@ -183,33 +186,46 @@ Clone the following repositories beside the SwiftPM directory:
    $> git clone https://github.com/apple/swift-driver
    ```
 
-6. [swift-crypto] and check out tag with the [latest version](https://github.com/apple/swift-crypto/tags).
-
-   For example, if the latest tag is 1.1.6:
-   ```sh
-   $> git clone https://github.com/apple/swift-crypto --branch 1.1.6
-   ```
-
-7. [swift-system] and check out tag with the [latest version](https://github.com/apple/swift-system/tags).
+6. [swift-system] and check out tag with the [latest version](https://github.com/apple/swift-system/tags).
 
     For example, if the latest tag is 1.0.0:
     ```sh
     $> git clone https://github.com/apple/swift-system --branch 1.0.0
     ```
 
-8. [swift-collections] and check out tag with the [latest version](https://github.com/apple/swift-collections/tags).
+7. [swift-collections] and check out tag with the [latest version](https://github.com/apple/swift-collections/tags).
 
     For example, if the latest tag is 1.0.1:
     ```sh
     $> git clone https://github.com/apple/swift-collections --branch 1.0.1
+    ```
+
+7. [swift-crypto] and check out tag with the [latest version](https://github.com/apple/swift-crypto/tags).
+
+    For example, if the latest tag is 2.3.0:
+    ```sh
+    $> git clone https://github.com/apple/swift-crypto --branch 2.3.0
+    ```
+
+8. [swift-asn1]
+   ```sh
+   $> git clone https://github.com/apple/swift-asn1
+   ```
+
+9. [swift-certificates]
+   ```sh
+   $> git clone https://github.com/apple/swift-certificates
+   ```
 
 [swift-argument-parser]: https://github.com/apple/swift-argument-parser
 [swift-collections]: https://github.com/apple/swift-collections
-[swift-crypto]: https://github.com/apple/swift-crypto
 [swift-driver]: https://github.com/apple/swift-driver
 [swift-llbuild]: https://github.com/apple/swift-llbuild
 [swift-system]: https://github.com/apple/swift-system
 [swift-tools-support-core]: https://github.com/apple/swift-tools-support-core
+[swift-crypto]: https://github.com/apple/swift-crypto
+[swift-asn1]: https://github.com/apple/swift-asn1
+[swift-certificates]: https://github.com/apple/swift-certificates
 [Yams]: https://github.com/jpsim/yams
 
 
@@ -298,13 +314,13 @@ Note there are several Linux and Swift versions options to choose from, e.g.:
 
 ## Creating Pull Requests
 
-1. Fork: https://github.com/apple/swift-package-manager
+1. Fork: https://github.com/swiftlang/swift-package-manager
 2. Clone a working copy of your fork
 3. Create a new branch
 4. Make your code changes
 5. Try to keep your changes (when possible) below 200 lines of code.
 6. We use [SwiftFormat](https://www.github.com/nicklockwood/SwiftFormat) to enforce code style. Please install and run SwiftFormat before submitting your PR.
-7. Commit (include the Radar link or JIRA issue id in the commit message if possible and a description your changes). Try to have only 1 commit in your PR (but, of course, if you add changes that can be helpful to be kept aside from the previous commit, make a new commit for them).
+7. Commit (include the Radar link or GitHub issue id in the commit message if possible and a description your changes). Try to have only 1 commit in your PR (but, of course, if you add changes that can be helpful to be kept aside from the previous commit, make a new commit for them).
 8. Push the commit / branch to your fork
 9. Make a PR from your fork / branch to `apple: main`
 10. While creating your PR, make sure to follow the PR Template providing information about the motivation and highlighting the changes.
@@ -320,11 +336,6 @@ license](https://swift.org/LICENSE.txt).
 
 SwiftPM uses [swift-ci](https://ci.swift.org) infrastructure for its continuous integration testing. The bots can be triggered on pull-requests if you have commit access. Otherwise, ask one of the code owners to trigger them for you.
 
-To run smoke test suite with the trunk compiler and other projects use:
-
-```
-@swift-ci please smoke test
-```
 
 This is **required** before a pull-request can be merged.
 
@@ -332,7 +343,7 @@ This is **required** before a pull-request can be merged.
 To run just the self-hosted test suite (faster turnaround times so it can be used to get quick feedback) use:
 
 ```
-@swift-ci please smoke test self hosted
+@swift-ci please test self hosted
 ```
 
 
@@ -342,12 +353,20 @@ To run the swift toolchain test suite including SwiftPM use:
 @swift-ci please test
 ```
 
+To run the swift toolchain test suite against a specific platform use one of the following:
+
+```
+@swift-ci please test macos
+@swift-ci please test linux
+@swift-ci please test windows
+```
 
 To run package compatibility test suite (validates we do not break 3rd party packages) use:
 
 ```
 @swift-ci please test package compatibility
 ```
+
 
 ## Generating Documentation
 
@@ -405,7 +424,7 @@ SwiftPM uses [Tools Support Core](https://github.com/apple/swift-tools-support-c
 
 If you want to connect with the Swift community you can:
 * Use Swift Forums: [https://forums.swift.org/c/development/SwiftPM](https://forums.swift.org/c/development/SwiftPM)
-* Contact the CODEOWNERS: https://github.com/apple/swift-package-manager/blob/main/CODEOWNERS
+* Contact the CODEOWNERS: https://github.com/swiftlang/swift-package-manager/blob/main/CODEOWNERS
 
 ## Additional resources
 

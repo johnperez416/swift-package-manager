@@ -17,11 +17,7 @@
 - ``wasi``
 - ``windows``
 
-### Encoding and Decoding
-
-- ``encode(to:)``
-
-### Type Methods
+### Type methods
 
 - ``custom(_:)``
 

@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2020-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2020-2023 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -81,6 +81,9 @@ extension PackageCollectionModel.V1.Collection {
     public struct Package: Equatable, Codable {
         /// The URL of the package. Currently only Git repository URLs are supported.
         public let url: URL
+        
+        /// Package identity for registry (https://github.com/swiftlang/swift-package-manager/blob/main/Documentation/PackageRegistry/Registry.md#36-package-identification).
+        public let identity: String?
 
         /// A description of the package.
         public let summary: String?
@@ -100,6 +103,7 @@ extension PackageCollectionModel.V1.Collection {
         /// Creates a `Package`
         public init(
             url: URL,
+            identity: String? = nil,
             summary: String?,
             keywords: [String]?,
             versions: [PackageCollectionModel.V1.Collection.Package.Version],
@@ -107,6 +111,7 @@ extension PackageCollectionModel.V1.Collection {
             license: PackageCollectionModel.V1.License?
         ) {
             self.url = url
+            self.identity = identity
             self.summary = summary
             self.keywords = keywords
             self.versions = versions
@@ -136,6 +141,12 @@ extension PackageCollectionModel.V1.Collection.Package {
         /// The package version's license.
         public let license: PackageCollectionModel.V1.License?
 
+        /// The author of the package version.
+        public let author: Author?
+
+        /// The signer of the package version.
+        public let signer: PackageCollectionModel.V1.Signer?
+
         /// When the package version was created.
         public let createdAt: Date?
 
@@ -147,6 +158,8 @@ extension PackageCollectionModel.V1.Collection.Package {
             defaultToolsVersion: String,
             verifiedCompatibility: [PackageCollectionModel.V1.Compatibility]?,
             license: PackageCollectionModel.V1.License?,
+            author: Author?,
+            signer: PackageCollectionModel.V1.Signer?,
             createdAt: Date?
         ) {
             self.version = version
@@ -155,6 +168,8 @@ extension PackageCollectionModel.V1.Collection.Package {
             self.defaultToolsVersion = defaultToolsVersion
             self.verifiedCompatibility = verifiedCompatibility
             self.license = license
+            self.author = author
+            self.signer = signer
             self.createdAt = createdAt
         }
 
@@ -187,6 +202,16 @@ extension PackageCollectionModel.V1.Collection.Package {
                 self.targets = targets
                 self.products = products
                 self.minimumPlatformVersions = minimumPlatformVersions
+            }
+        }
+
+        public struct Author: Equatable, Codable {
+            /// The author name.
+            public let name: String
+
+            /// Creates an `Author`
+            public init(name: String) {
+                self.name = name
             }
         }
     }
@@ -281,6 +306,32 @@ extension PackageCollectionModel.V1 {
             self.url = url
         }
     }
+
+    public struct Signer: Equatable, Codable {
+        /// The signer type. (e.g., ADP)
+        public let type: String
+
+        /// The common name of the signing certificate's subject.
+        public let commonName: String
+
+        /// The organizational unit name of the signing certificate's subject.
+        public let organizationalUnitName: String
+
+        /// The organization name of the signing certificate's subject.
+        public let organizationName: String
+
+        public init(
+            type: String,
+            commonName: String,
+            organizationalUnitName: String,
+            organizationName: String
+        ) {
+            self.type = type
+            self.commonName = commonName
+            self.organizationalUnitName = organizationalUnitName
+            self.organizationName = organizationName
+        }
+    }
 }
 
 extension PackageCollectionModel.V1.Platform: Hashable {
@@ -335,12 +386,15 @@ extension PackageCollectionModel.V1 {
 
         /// A test product.
         case test
+        
+        /// A macro product.
+        case `macro`
     }
 }
 
 extension PackageCollectionModel.V1.ProductType: Codable {
     private enum CodingKeys: String, CodingKey {
-        case library, executable, plugin, snippet, test
+        case library, executable, plugin, snippet, test, `macro`
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -357,6 +411,8 @@ extension PackageCollectionModel.V1.ProductType: Codable {
             try container.encodeNil(forKey: .snippet)
         case .test:
             try container.encodeNil(forKey: .test)
+        case .macro:
+            try container.encodeNil(forKey: .macro)
         }
     }
 
@@ -378,6 +434,8 @@ extension PackageCollectionModel.V1.ProductType: Codable {
             self = .snippet
         case .test:
             self = .test
+        case .macro:
+            self = .macro
         }
     }
 }

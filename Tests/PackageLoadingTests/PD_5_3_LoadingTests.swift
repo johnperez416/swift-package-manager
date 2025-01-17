@@ -13,16 +13,17 @@
 import Basics
 import PackageModel
 import PackageLoading
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
-class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
+import enum TSCBasic.PathValidationError
+
+final class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
     override var toolsVersion: ToolsVersion {
         .v5_3
     }
 
-    func testResources() throws {
+    func testResources() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -48,7 +49,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -62,7 +63,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(testResources[0], TargetDescription.Resource(rule: .process(localization: .none), path: "testfixture.txt"))
     }
 
-    func testBinaryTargetsTrivial() throws {
+    func testBinaryTargetsTrivial() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -87,7 +88,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -105,6 +106,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             resources: [],
             publicHeadersPath: nil,
             type: .binary,
+            packageAccess: false,
             pkgConfig: nil,
             providers: nil,
             settings: [],
@@ -119,6 +121,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             resources: [],
             publicHeadersPath: nil,
             type: .binary,
+            packageAccess: false,
             pkgConfig: nil,
             providers: nil,
             settings: [],
@@ -133,6 +136,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             resources: [],
             publicHeadersPath: nil,
             type: .binary,
+            packageAccess: false,
             pkgConfig: nil,
             providers: nil,
             settings: [],
@@ -140,7 +144,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
         ))
     }
 
-    func testBinaryTargetsDisallowedProperties() throws {
+    func testBinaryTargetsDisallowedProperties() async throws {
         let content = """
             import PackageDescription
             var fwBinaryTarget = Target.binaryTarget(
@@ -153,12 +157,12 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        XCTAssertThrowsError(try loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
+        await XCTAssertAsyncThrowsError(try await loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
             XCTAssertEqual(error.localizedDescription, "target 'Foo' contains a value for disallowed property 'settings'")
         }
     }
 
-    func testBinaryTargetsValidation() throws {
+    func testBinaryTargetsValidation() async throws {
         do {
             let content = """
                 import PackageDescription
@@ -174,32 +178,10 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
-                result.check(diagnostic: "invalid type for binary product 'FooLibrary'; products referencing only binary targets must have a type of 'library'", severity: .error)
-            }
-        }
-
-        do {
-            let content = """
-                import PackageDescription
-                let package = Package(
-                    name: "Foo",
-                    products: [
-                        .executable(name: "FooLibrary", targets: ["Foo"]),
-                    ],
-                    targets: [
-                        .binaryTarget(name: "Foo", path: "Foo.xcframework"),
-                    ]
-                )
-                """
-
-            let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
-            XCTAssertNoDiagnostics(observability.diagnostics)
-            testDiagnostics(validationDiagnostics) { result in
-                result.check(diagnostic: "invalid type for binary product 'FooLibrary'; products referencing only binary targets must have a type of 'library'", severity: .error)
+                result.check(diagnostic: "invalid type for binary product 'FooLibrary'; products referencing only binary targets must be executable or automatic library products", severity: .error)
             }
         }
 
@@ -219,7 +201,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             XCTAssertNoDiagnostics(validationDiagnostics)
         }
@@ -239,7 +221,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "invalid local path ' ' for binary target 'Foo', path expected to be relative to package root.", severity: .error)
@@ -261,7 +243,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "invalid URL scheme for binary target 'Foo'; valid schemes are: 'https'", severity: .error)
@@ -283,7 +265,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "unsupported extension for binary target 'Foo'; valid extensions are: 'zip', 'xcframework', 'artifactbundle'", severity: .error)
@@ -308,7 +290,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "unsupported extension for binary target 'Foo'; valid extensions are: 'zip', 'artifactbundleindex'", severity: .error)
@@ -330,7 +312,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "unsupported extension for binary target 'Foo'; valid extensions are: 'zip', 'xcframework', 'artifactbundle'", severity: .error)
@@ -355,7 +337,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "unsupported extension for binary target 'Foo'; valid extensions are: 'zip', 'artifactbundleindex'", severity: .error)
@@ -380,7 +362,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "invalid URL scheme for binary target 'Foo'; valid schemes are: 'https'", severity: .error)
@@ -405,7 +387,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "invalid URL ' ' for binary target 'Foo'", severity: .error)
@@ -429,7 +411,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            let (_, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+            let (_, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
             XCTAssertNoDiagnostics(observability.diagnostics)
             testDiagnostics(validationDiagnostics) { result in
                 result.check(diagnostic: "invalid local path '/tmp/foo/bar' for binary target 'Foo', path expected to be relative to package root.", severity: .error)
@@ -437,7 +419,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
         }
     }
 
-    func testConditionalTargetDependencies() throws {
+    func testConditionalTargetDependencies() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -459,7 +441,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
 
@@ -470,7 +452,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
         XCTAssertEqual(dependencies[3], .byName(name: "Bar", condition: .init(platformNames: ["watchos", "ios"])))
     }
 
-    func testDefaultLocalization() throws {
+    func testDefaultLocalization() async throws {
         let content = """
             import PackageDescription
             let package = Package(
@@ -483,13 +465,13 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        let (manifest, validationDiagnostics) = try loadAndValidateManifest(content, observabilityScope: observability.topScope)
+        let (manifest, validationDiagnostics) = try await loadAndValidateManifest(content, observabilityScope: observability.topScope)
         XCTAssertNoDiagnostics(observability.diagnostics)
         XCTAssertNoDiagnostics(validationDiagnostics)
         XCTAssertEqual(manifest.defaultLocalization, "fr")
     }
 
-    func testTargetPathsValidation() throws {
+    func testTargetPathsValidation() async throws {
         let manifestItemToDiagnosticMap = [
             "sources: [\"/foo.swift\"]": "invalid relative path '/foo.swift",
             "resources: [.copy(\"/foo.txt\")]": "invalid relative path '/foo.txt'",
@@ -511,7 +493,7 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
                 """
 
             let observability = ObservabilitySystem.makeForTesting()
-            XCTAssertThrowsError(try loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
+            await XCTAssertAsyncThrowsError(try await loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
                 if let error = error as? PathValidationError {
                     XCTAssertMatch(error.description, .contains(expectedDiag))
                 } else {
@@ -521,28 +503,19 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
         }
     }
 
-    func testNonZeroExitStatusDoesNotAssert() throws {
+    func testNonZeroExitStatusDoesNotAssert() async throws {
         let content = """
-            #if canImport(Glibc)
-            import Glibc
-            #elseif os(Windows)
-            import MSVCRT
-            import WinSDK
-            #else
-            import Darwin.C
-            #endif
-
             print("crash")
             exit(1)
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        XCTAssertThrowsError(try loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
+        await XCTAssertAsyncThrowsError(try await loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
             XCTAssertNotNil(error as? ManifestParseError)
         }
     }
 
-    func testManifestLoadingIsSandboxed() throws {
+    func testManifestLoadingIsSandboxed() async throws {
         #if !os(macOS)
         // Sandboxing is only done on macOS today.
         try XCTSkipIf(true, "test is only supported on macOS")
@@ -562,8 +535,8 @@ class PackageDescription5_3LoadingTests: PackageDescriptionLoadingTests {
             """
 
         let observability = ObservabilitySystem.makeForTesting()
-        XCTAssertThrowsError(try loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
-            if case ManifestParseError.invalidManifestFormat(let error, _) = error {
+        await XCTAssertAsyncThrowsError(try await loadAndValidateManifest(content, observabilityScope: observability.topScope), "expected error") { error in
+            if case ManifestParseError.invalidManifestFormat(let error, _, _) = error {
                 XCTAssertTrue(error.contains("Operation not permitted"), "unexpected error message: \(error)")
             } else {
                 XCTFail("unexpected error: \(error)")

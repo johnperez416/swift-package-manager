@@ -6,7 +6,7 @@
 # See http://swift.org/LICENSE.txt for license information
 # See http://swift.org/CONTRIBUTORS.txt for Swift project authors
 
-add_library(PackagePlugin
+add_library(PackagePlugin SHARED
   ArgumentExtractor.swift
   Command.swift
   Context.swift
@@ -23,10 +23,10 @@ add_library(PackagePlugin
 
 target_compile_options(PackagePlugin PUBLIC
   $<$<COMPILE_LANGUAGE:Swift>:-package-description-version$<SEMICOLON>999.0>)
+target_compile_options(PackagePlugin PUBLIC
+  $<$<COMPILE_LANGUAGE:Swift>:-enable-library-evolution>)
   
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL Darwin)
-  target_compile_options(PackagePlugin PUBLIC
-    $<$<COMPILE_LANGUAGE:Swift>:-enable-library-evolution>)
   set(SWIFT_INTERFACE_PATH ${CMAKE_BINARY_DIR}/pm/PluginAPI/PackagePlugin.swiftinterface)
   target_compile_options(PackagePlugin PUBLIC
     $<$<COMPILE_LANGUAGE:Swift>:-emit-module-interface-path$<SEMICOLON>${SWIFT_INTERFACE_PATH}>)

@@ -15,7 +15,7 @@ import struct SourceControl.Revision
 
 /// A checkout state represents the current state of a repository.
 ///
-/// A state will always has a revision. It can also have a branch or a version but not both.
+/// A state will always have a revision. It can also have a branch or a version but not both.
 public enum CheckoutState: Equatable, Hashable {
     case revision(_ revision: Revision)
     case version(_ version: Version, revision: Revision)
@@ -29,8 +29,21 @@ extension CheckoutState: CustomStringConvertible {
             return revision.identifier
         case .version(let version, _):
             return version.description
-        case .branch(let branch, _):
-            return branch
+        case .branch(let branch, let revision):
+            return "\(branch) (\(revision.identifier.prefix(7)))"
+        }
+    }
+}
+
+extension CheckoutState: CustomDebugStringConvertible {
+    public var debugDescription: String {
+        switch self {
+        case .revision(let revision):
+            return revision.identifier
+        case .version(let version, let revision):
+            return "\(version.description) (\(revision.identifier))"
+        case .branch(let branch, let revision):
+            return "\(branch) (\(revision.identifier))"
         }
     }
 }

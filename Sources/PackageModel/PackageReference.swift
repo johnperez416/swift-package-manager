@@ -12,14 +12,13 @@
 
 import Basics
 import Foundation
-import TSCBasic
 
 /// A package reference.
 ///
 /// This represents a reference to a package containing its identity and location.
 public struct PackageReference {
     /// The kind of package reference.
-    public enum Kind: Equatable, CustomStringConvertible {
+    public enum Kind: Hashable, CustomStringConvertible, Sendable {
         /// A root package.
         case root(AbsolutePath)
 
@@ -30,7 +29,7 @@ public struct PackageReference {
         case localSourceControl(AbsolutePath)
 
         /// A remote source package.
-        case remoteSourceControl(URL)
+        case remoteSourceControl(SourceControlURL)
 
         /// A package from  a registry.
         case registry(PackageIdentity)
@@ -86,11 +85,6 @@ public struct PackageReference {
 
     /// The identity of the package.
     public let identity: PackageIdentity
-
-    @available(*, deprecated)
-    public var name: String {
-        return self.deprecatedName
-    }
 
     /// The name of the package, if available.
     // soft deprecated 11/21
@@ -150,7 +144,7 @@ public struct PackageReference {
         PackageReference(identity: identity, kind: .localSourceControl(path))
     }
 
-    public static func remoteSourceControl(identity: PackageIdentity, url: URL) -> PackageReference {
+    public static func remoteSourceControl(identity: PackageIdentity, url: SourceControlURL) -> PackageReference {
         PackageReference(identity: identity, kind: .remoteSourceControl(url))
     }
 
@@ -167,7 +161,24 @@ extension PackageReference: Equatable {
 
     // TODO: consider rolling into Equatable
     public func equalsIncludingLocation(_ other: PackageReference) -> Bool {
-        return self.identity == other.identity && self.canonicalLocation == other.canonicalLocation
+        if self.identity != other.identity {
+            return false
+        }
+        if self.canonicalLocation != other.canonicalLocation {
+            return false
+        }
+        switch (self.kind, other.kind) {
+        case (.remoteSourceControl(let lurl), .remoteSourceControl(let rurl)):
+            return lurl.canonicalURL == rurl.canonicalURL
+        default:
+            return true
+        }
+    }
+}
+
+extension SourceControlURL {
+    var canonicalURL: CanonicalPackageURL {
+        CanonicalPackageURL(self.absoluteString)
     }
 }
 
@@ -175,6 +186,12 @@ extension PackageReference: Hashable {
     // TODO: consider location as well?
     public func hash(into hasher: inout Hasher) {
         hasher.combine(self.identity)
+    }
+}
+
+extension PackageReference {
+    public var diagnosticsMetadata: ObservabilityMetadata {
+        return .packageMetadata(identity: self.identity, kind: self.kind)
     }
 }
 

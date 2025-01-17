@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-import TSCBasic
 
 /// Toolchain configuration required for evaluation of swift code such as the manifests or plugins
 ///
@@ -28,7 +27,7 @@ public struct ToolchainConfiguration {
     public var swiftCompilerFlags: [String]
 
     /// Environment to pass to the Swift compiler (defaults to the inherited environment).
-    public var swiftCompilerEnvironment: EnvironmentVariables
+    public var swiftCompilerEnvironment: Environment
 
     /// SwiftPM library paths.
     public var swiftPMLibrariesLocation: SwiftPMLibrariesLocation
@@ -42,6 +41,10 @@ public struct ToolchainConfiguration {
     ///
     /// This is optional for example on macOS w/o Xcode.
     public var xctestPath: AbsolutePath?
+
+    /// Path to the swift-testing utility.
+    /// Currently computed only for Windows.
+    public var swiftTestingPath: AbsolutePath?
 
     /// Creates the set of manifest resources associated with a `swiftc` executable.
     ///
@@ -57,10 +60,11 @@ public struct ToolchainConfiguration {
         librarianPath: AbsolutePath,
         swiftCompilerPath: AbsolutePath,
         swiftCompilerFlags: [String] = [],
-        swiftCompilerEnvironment: EnvironmentVariables = .process(),
+        swiftCompilerEnvironment: Environment = .current,
         swiftPMLibrariesLocation: SwiftPMLibrariesLocation? = nil,
         sdkRootPath: AbsolutePath? = nil,
-        xctestPath: AbsolutePath? = nil
+        xctestPath: AbsolutePath? = nil,
+        swiftTestingPath: AbsolutePath? = nil
     ) {
         let swiftPMLibrariesLocation = swiftPMLibrariesLocation ?? {
             return .init(swiftCompilerPath: swiftCompilerPath)
@@ -73,44 +77,65 @@ public struct ToolchainConfiguration {
         self.swiftPMLibrariesLocation = swiftPMLibrariesLocation
         self.sdkRootPath = sdkRootPath
         self.xctestPath = xctestPath
+        self.swiftTestingPath = swiftTestingPath
     }
 }
 
 extension ToolchainConfiguration {
     public struct SwiftPMLibrariesLocation {
         public var manifestLibraryPath: AbsolutePath
+        public var manifestModulesPath: AbsolutePath
         public var pluginLibraryPath: AbsolutePath
+        public var pluginModulesPath: AbsolutePath
 
-        public init(manifestLibraryPath: AbsolutePath, manifestLibraryMinimumDeploymentTarget: PlatformVersion? = nil, pluginLibraryPath: AbsolutePath, pluginLibraryMinimumDeploymentTarget: PlatformVersion? = nil) {
+        public init(
+            manifestLibraryPath: AbsolutePath,
+            manifestModulesPath: AbsolutePath? = nil,
+            manifestLibraryMinimumDeploymentTarget: PlatformVersion? = nil,
+            pluginLibraryPath: AbsolutePath,
+            pluginModulesPath: AbsolutePath? = nil,
+            pluginLibraryMinimumDeploymentTarget: PlatformVersion? = nil
+        ) {
             #if os(macOS)
-            if let manifestLibraryMinimumDeploymentTarget = manifestLibraryMinimumDeploymentTarget {
+            if let manifestLibraryMinimumDeploymentTarget {
                 self.manifestLibraryMinimumDeploymentTarget = manifestLibraryMinimumDeploymentTarget
-            } else if let manifestLibraryMinimumDeploymentTarget = try? MinimumDeploymentTarget.computeMinimumDeploymentTarget(of: Self.macOSManifestLibraryPath(for: manifestLibraryPath), platform: .macOS) {
+            } else if let manifestLibraryMinimumDeploymentTarget = try? MinimumDeploymentTarget.default.computeMinimumDeploymentTarget(of: Self.macOSManifestLibraryPath(for: manifestLibraryPath), platform: .macOS) {
                 self.manifestLibraryMinimumDeploymentTarget = manifestLibraryMinimumDeploymentTarget
             } else {
-                self.manifestLibraryMinimumDeploymentTarget = Self.defaultMinimumDeploymentTarget
+                self.manifestLibraryMinimumDeploymentTarget = nil
             }
 
-            if let pluginLibraryMinimumDeploymentTarget = pluginLibraryMinimumDeploymentTarget {
+            if let pluginLibraryMinimumDeploymentTarget {
                 self.pluginLibraryMinimumDeploymentTarget = pluginLibraryMinimumDeploymentTarget
-            } else if let pluginLibraryMinimumDeploymentTarget = try? MinimumDeploymentTarget.computeMinimumDeploymentTarget(of: Self.macOSPluginLibraryPath(for: pluginLibraryPath), platform: .macOS) {
+            } else if let pluginLibraryMinimumDeploymentTarget = try? MinimumDeploymentTarget.default.computeMinimumDeploymentTarget(of: Self.macOSPluginLibraryPath(for: pluginLibraryPath), platform: .macOS) {
                 self.pluginLibraryMinimumDeploymentTarget = pluginLibraryMinimumDeploymentTarget
             } else {
-                self.pluginLibraryMinimumDeploymentTarget = Self.defaultMinimumDeploymentTarget
+                self.pluginLibraryMinimumDeploymentTarget = nil
             }
             #else
             precondition(manifestLibraryMinimumDeploymentTarget == nil && pluginLibraryMinimumDeploymentTarget == nil, "deployment targets can only be specified on macOS")
             #endif
 
             self.manifestLibraryPath = manifestLibraryPath
+            if let manifestModulesPath {
+                self.manifestModulesPath = manifestModulesPath
+            } else {
+                self.manifestModulesPath = manifestLibraryPath
+            }
+
             self.pluginLibraryPath = pluginLibraryPath
+            if let pluginModulesPath {
+                self.pluginModulesPath = pluginModulesPath
+            } else {
+                self.pluginModulesPath = pluginLibraryPath
+            }
         }
 
         public init(root: AbsolutePath, manifestLibraryMinimumDeploymentTarget: PlatformVersion? = nil, pluginLibraryMinimumDeploymentTarget: PlatformVersion? = nil) {
             self.init(
-                manifestLibraryPath: root.appending(component: "ManifestAPI"),
+                manifestLibraryPath: root.appending("ManifestAPI"),
                 manifestLibraryMinimumDeploymentTarget: manifestLibraryMinimumDeploymentTarget,
-                pluginLibraryPath: root.appending(component: "PluginAPI"),
+                pluginLibraryPath: root.appending("PluginAPI"),
                 pluginLibraryMinimumDeploymentTarget: pluginLibraryMinimumDeploymentTarget
             )
         }
@@ -123,17 +148,15 @@ extension ToolchainConfiguration {
         }
 
 #if os(macOS)
-        private static let defaultMinimumDeploymentTarget = PlatformVersion("10.15")
-
-        public var manifestLibraryMinimumDeploymentTarget: PlatformVersion
-        public var pluginLibraryMinimumDeploymentTarget: PlatformVersion
+        public var manifestLibraryMinimumDeploymentTarget: PlatformVersion?
+        public var pluginLibraryMinimumDeploymentTarget: PlatformVersion?
 
         private static func macOSManifestLibraryPath(for manifestAPI: AbsolutePath) -> AbsolutePath {
             if manifestAPI.extension == "framework" {
-                return manifestAPI.appending(component: "PackageDescription")
+                return manifestAPI.appending("PackageDescription")
             } else {
                 // note: this is not correct for all platforms, but we only actually use it on macOS.
-                return manifestAPI.appending(component: "libPackageDescription.dylib")
+                return manifestAPI.appending("libPackageDescription.dylib")
             }
         }
 
@@ -145,10 +168,10 @@ extension ToolchainConfiguration {
             // if runtimePath is set to "PackageFrameworks" that means we could be developing SwiftPM in Xcode
             // which produces a framework for dynamic package products.
             if pluginAPI.extension == "framework" {
-                return pluginAPI.appending(component: "PackagePlugin")
+                return pluginAPI.appending("PackagePlugin")
             } else {
                 // note: this is not correct for all platforms, but we only actually use it on macOS.
-                return pluginAPI.appending(component: "libPackagePlugin.dylib")
+                return pluginAPI.appending("libPackagePlugin.dylib")
             }
         }
 

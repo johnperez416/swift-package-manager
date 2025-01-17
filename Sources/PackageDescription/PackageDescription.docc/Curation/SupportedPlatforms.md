@@ -23,6 +23,13 @@
 - <doc:/documentation/PackageDescription/Platform/watchOS>
 - ``WatchOSVersion``
 
+### Supporting visionOS
+
+- ``visionOS(_:)-3ip0z``
+- ``visionOS(_:)-6ur2u``
+- <doc:/documentation/PackageDescription/Platform/visionOS>
+- ``VisionOSVersion``
+
 ### Supporting tvOS
 
 - ``tvOS(_:)-6931l``
@@ -48,11 +55,7 @@
 
 - <doc:/documentation/PackageDescription/Platform/linux>
 
-### Encoding and Decoding
-
-- ``encode(to:)``
-
-### Type Methods
+### Type methods
 
 - ``custom(_:versionString:)``
 

@@ -11,11 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 import Foundation
-import TSCBasic
 
 /// Representation of Netrc configuration
-@available (macOS 10.13, iOS 11, tvOS 11, watchOS 4, *)
-public struct Netrc {
+public struct Netrc: Sendable {
     /// Representation of `machine` connection settings & `default` connection settings.
     /// If `default` connection settings present, they will be last element.
     public let machines: [Machine]
@@ -29,22 +27,23 @@ public struct Netrc {
     /// - Parameters:
     ///   - url: The url to retrieve authorization information for.
     public func authorization(for url: URL) -> Authorization? {
-        guard let index = machines.firstIndex(where: { $0.name == url.host }) ?? machines.firstIndex(where: { $0.isDefault }) else {
+        guard let index = machines.firstIndex(where: { $0.name == url.host }) ?? machines
+            .firstIndex(where: { $0.isDefault })
+        else {
             return .none
         }
-        let machine = machines[index]
+        let machine = self.machines[index]
         return Authorization(login: machine.login, password: machine.password)
     }
 
-
     /// Representation of connection settings
-    public struct Machine: Equatable {
+    public struct Machine: Equatable, Sendable {
         public let name: String
         public let login: String
         public let password: String
 
         public var isDefault: Bool {
-            return name == "default"
+            self.name == "default"
         }
 
         public init(name: String, login: String, password: String) {
@@ -54,11 +53,13 @@ public struct Netrc {
         }
 
         init?(for match: NSTextCheckingResult, string: String, variant: String = "") {
-            guard let name = RegexUtil.Token.machine.capture(in: match, string: string) ?? RegexUtil.Token.default.capture(in: match, string: string),
-                  let login = RegexUtil.Token.login.capture(prefix: variant, in: match, string: string),
-                  let password = RegexUtil.Token.password.capture(prefix: variant, in: match, string: string) else {
-                      return nil
-                  }
+            guard let name = RegexUtil.Token.machine.capture(in: match, string: string) ?? RegexUtil.Token.default
+                .capture(in: match, string: string),
+                let login = RegexUtil.Token.login.capture(prefix: variant, in: match, string: string),
+                let password = RegexUtil.Token.password.capture(prefix: variant, in: match, string: string)
+            else {
+                return nil
+            }
             self = Machine(name: name, login: login, password: password)
         }
     }
@@ -92,17 +93,22 @@ public struct NetrcParser {
         return try Self.parse(content)
     }
 
-    /// Parses strnigified netrc content
+    /// Parses stringified netrc content
     ///
     /// - Parameters:
     ///   - content: The content to parse
     public static func parse(_ content: String) throws -> Netrc {
-        let content = trimComments(from: content)
+        let content = self.trimComments(from: content)
         let regex = try! NSRegularExpression(pattern: RegexUtil.netrcPattern, options: [])
-        let matches = regex.matches(in: content, options: [], range: NSRange(content.startIndex..<content.endIndex, in: content))
+        let matches = regex.matches(
+            in: content,
+            options: [],
+            range: NSRange(content.startIndex ..< content.endIndex, in: content)
+        )
 
         let machines: [Netrc.Machine] = matches.compactMap {
-            return Netrc.Machine(for: $0, string: content, variant: "lp") ?? Netrc.Machine(for: $0, string: content, variant: "pl")
+            Netrc.Machine(for: $0, string: content, variant: "lp") ?? Netrc
+                .Machine(for: $0, string: content, variant: "pl")
         }
 
         if let defIndex = machines.firstIndex(where: { $0.isDefault }) {
@@ -126,8 +132,11 @@ public struct NetrcParser {
         let matches = regex.matches(in: text, range: range)
         var trimmedCommentsText = text
         matches.forEach {
-            trimmedCommentsText = trimmedCommentsText
-                .replacingOccurrences(of: nsString.substring(with: $0.range), with: "")
+            let matchedString = nsString.substring(with: $0.range)
+            if !matchedString.starts(with: "\"") {
+                trimmedCommentsText = trimmedCommentsText
+                    .replacingOccurrences(of: matchedString, with: "")
+            }
         }
         return trimmedCommentsText
     }
@@ -140,29 +149,37 @@ public enum NetrcError: Error, Equatable {
     case invalidDefaultMachinePosition
 }
 
-@available (macOS 10.13, iOS 11, tvOS 11, watchOS 4, *)
-fileprivate enum RegexUtil {
-    @frozen fileprivate enum Token: String, CaseIterable {
+private enum RegexUtil {
+    fileprivate enum Token: String, CaseIterable {
         case machine, login, password, account, macdef, `default`
 
         func capture(prefix: String = "", in match: NSTextCheckingResult, string: String) -> String? {
-            guard let range = Range(match.range(withName: prefix + rawValue), in: string) else { return nil }
-            return String(string[range])
+            if let quotedRange = Range(match.range(withName: prefix + rawValue + quotedIdentifier), in: string) {
+                return String(string[quotedRange])
+            } else if let range = Range(match.range(withName: prefix + rawValue), in: string) {
+                return String(string[range])
+            } else {
+                return nil
+            }
         }
     }
 
-    static let comments: String = "\\#[\\s\\S]*?.*$"
+    private static let quotedIdentifier = "quoted"
+    static let comments: String = "(\"[^\"]*\"|\\s#.*$)"
     static let `default`: String = #"(?:\s*(?<default>default))"#
     static let accountOptional: String = #"(?:\s*account\s+\S++)?"#
-    static let loginPassword: String = #"\#(namedTrailingCapture("login", prefix: "lp"))\#(accountOptional)\#(namedTrailingCapture("password", prefix: "lp"))"#
-    static let passwordLogin: String = #"\#(namedTrailingCapture("password", prefix: "pl"))\#(accountOptional)\#(namedTrailingCapture("login", prefix: "pl"))"#
-    static let netrcPattern = #"(?:(?:(\#(namedTrailingCapture("machine"))|\#(namedMatch("default"))))(?:\#(loginPassword)|\#(passwordLogin)))"#
+    static let loginPassword: String =
+        #"\#(namedTrailingCapture("login", prefix: "lp"))\#(accountOptional)\#(namedTrailingCapture("password", prefix: "lp"))"#
+    static let passwordLogin: String =
+        #"\#(namedTrailingCapture("password", prefix: "pl"))\#(accountOptional)\#(namedTrailingCapture("login", prefix: "pl"))"#
+    static let netrcPattern =
+        #"(?:(?:(\#(namedTrailingCapture("machine"))|\#(namedMatch("default"))))(?:\#(loginPassword)|\#(passwordLogin)))"#
 
     static func namedMatch(_ string: String) -> String {
-        return #"(?:\s*(?<\#(string)>\#(string)))"#
+        #"(?:\s*(?<\#(string)>\#(string)))"#
     }
 
     static func namedTrailingCapture(_ string: String, prefix: String = "") -> String {
-        return #"\s*\#(string)\s+(?<\#(prefix + string)>\S++)"#
+        #"\s*\#(string)\s+(?:"(?<\#(prefix + string + quotedIdentifier)>[^"]*)"|(?<\#(prefix + string)>\S+))"#
     }
 }

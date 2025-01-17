@@ -10,11 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-import TSCBasic
-
 import Basics
 import PackageCollectionsModel
 import PackageModel
+
+import struct TSCUtility.Version
 
 // MARK: - Model validations
 
@@ -40,7 +40,7 @@ extension Model.CollectionSource {
 
                 if absolutePath == nil {
                     appendMessage(.error("Invalid file path: \(self.url.path). It must be an absolute file system path."))
-                } else if let absolutePath = absolutePath, !fileSystem.exists(absolutePath) {
+                } else if let absolutePath, !fileSystem.exists(absolutePath) {
                     appendMessage(.error("\(self.url.path) is either a non-local path or the file does not exist."))
                 }
             }
@@ -82,7 +82,7 @@ extension PackageCollectionModel.V1 {
 
         // TODO: validate package url?
         private func validate(package: Collection.Package, messages: inout [ValidationMessage]) {
-            let packageID = "\(PackageIdentity(url: package.url).description) (\(package.url.absoluteString))"
+            let packageID = "\(PackageIdentity(url: SourceControlURL(package.url)).description) (\(package.url.absoluteString))"
 
             guard !package.versions.isEmpty else {
                 messages.append(.error("Package \(packageID) does not have any versions.", property: "package.versions"))

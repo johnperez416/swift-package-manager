@@ -14,7 +14,8 @@ import Basics
 import PackageGraph
 import PackageModel
 import SourceControl
-import TSCBasic
+
+import struct TSCUtility.Version
 
 extension Workspace {
     /// An individual managed dependency.
@@ -100,11 +101,11 @@ extension Workspace {
         ) throws -> ManagedDependency {
             switch packageRef.kind {
             case .root(let path), .fileSystem(let path), .localSourceControl(let path):
-                return ManagedDependency(
+                return try ManagedDependency(
                     packageRef: packageRef,
                     state: .fileSystem(path),
                     // FIXME: This is just a fake entry, we should fix it.
-                    subpath: RelativePath(packageRef.identity.description)
+                    subpath: RelativePath(validating: packageRef.identity.description)
                 )
             default:
                 throw InternalError("invalid package type: \(packageRef.kind)")
@@ -195,7 +196,7 @@ extension Workspace {
 
         // When loading manifests in Workspace, there are cases where we must also compare the location
         // as it may attempt to load manifests for dependencies that have the same identity but from a different location
-        // (e.g. dependency is changed to  a fork with the same identity)
+        // (e.g. dependency is changed to a fork with the same identity)
         public subscript(comparingLocation package: PackageReference) -> ManagedDependency? {
             if let dependency = self.dependencies[package.identity], dependency.packageRef.equalsIncludingLocation(package) {
                 return dependency

@@ -10,23 +10,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-import Foundation
 import Basics
-import PackageModel
+import Foundation
 import PackageGraph
-import TSCBasic
-
-import struct TSCUtility.Triple
+import PackageModel
 
 /// Information about a library from a binary dependency.
 public struct LibraryInfo: Equatable {
     /// The path to the binary.
     public let libraryPath: AbsolutePath
 
-    /// The path to the headers directory, if one exists.
-    public let headersPath: AbsolutePath?
+    /// The paths to the headers directories.
+    public let headersPaths: [AbsolutePath]
 }
-
 
 /// Information about an executable from a binary dependency.
 public struct ExecutableInfo: Equatable {
@@ -35,27 +31,29 @@ public struct ExecutableInfo: Equatable {
 
     /// The path to the executable.
     public let executablePath: AbsolutePath
+
+    /// Supported triples, e.g. `x86_64-apple-macosx`
+    public let supportedTriples: [Triple]
 }
 
-
-extension BinaryTarget {
-    
+extension BinaryModule {
     public func parseXCFrameworks(for triple: Triple, fileSystem: FileSystem) throws -> [LibraryInfo] {
         // At the moment we return at most a single library.
         let metadata = try XCFrameworkMetadata.parse(fileSystem: fileSystem, rootPath: self.artifactPath)
         // Filter the libraries that are relevant to the triple.
-        // FIXME: this filter needs to become more sophisticated
         guard let library = metadata.libraries.first(where: {
-            $0.platform == triple.os.asXCFrameworkPlatformString &&
-            $0.architectures.contains(triple.arch.rawValue)
+            $0.platform == triple.os?.asXCFrameworkPlatformString &&
+            $0.variant == triple.environment?.asXCFrameworkPlatformVariantString &&
+            $0.architectures.contains(triple.archName)
         }) else {
             return []
         }
         // Construct a LibraryInfo for the library.
         let libraryDir = self.artifactPath.appending(component: library.libraryIdentifier)
-        let libraryFile = AbsolutePath(library.libraryPath, relativeTo: libraryDir)
-        let headersDir = library.headersPath.map { AbsolutePath($0, relativeTo: libraryDir) }
-        return [LibraryInfo(libraryPath: libraryFile, headersPath: headersDir)]
+        let libraryFile = try AbsolutePath(validating: library.libraryPath, relativeTo: libraryDir)
+        let headersDirs = try library.headersPath
+            .map { [try AbsolutePath(validating: $0, relativeTo: libraryDir)] } ?? [] + [libraryDir]
+        return [LibraryInfo(libraryPath: libraryFile, headersPaths: headersDirs)]
     }
 
     public func parseArtifactArchives(for triple: Triple, fileSystem: FileSystem) throws -> [ExecutableInfo] {
@@ -67,18 +65,26 @@ extension BinaryTarget {
         // TODO: Add support for libraries
         let executables = metadata.artifacts.filter { $0.value.type == .executable }
         // Construct an ExecutableInfo for each matching variant.
-        return executables.flatMap { entry in
-            // FIXME: this filter needs to become more sophisticated
-            entry.value.variants.filter {
-                return $0.supportedTriples.contains(versionLessTriple)
-            }.map{
-                ExecutableInfo(name: entry.key, executablePath: AbsolutePath($0.path, relativeTo: self.artifactPath))
+        return try executables.flatMap { entry in
+            // Filter supported triples with versionLessTriple and pass into
+            // ExecutableInfo; empty if non matching triples found.
+            try entry.value.variants.map {
+                guard let supportedTriples = $0.supportedTriples else {
+                    throw StringError("No \"supportedTriples\" found in the artifact metadata for \(entry.key) in \(self.artifactPath)")
+                }
+                let filteredSupportedTriples = try supportedTriples
+                    .filter { try $0.withoutVersion() == versionLessTriple }
+                return ExecutableInfo(
+                    name: entry.key,
+                    executablePath: self.artifactPath.appending($0.path),
+                    supportedTriples: filteredSupportedTriples
+                )
             }
         }
     }
 }
 
-fileprivate extension Triple {
+extension Triple {
     func withoutVersion() throws -> Triple {
         if isDarwin() {
             let stringWithoutVersion = tripleString(forPlatformVersion: "")
@@ -89,14 +95,35 @@ fileprivate extension Triple {
     }
 }
 
-fileprivate extension Triple.OS {
+extension Triple.OS {
     /// Returns a representation of the receiver that can be compared with platform strings declared in an XCFramework.
-    var asXCFrameworkPlatformString: String? {
+    fileprivate var asXCFrameworkPlatformString: String? {
         switch self {
-        case .darwin, .linux, .wasi, .windows, .openbsd:
+        case .darwin, .linux, .wasi, .win32, .openbsd, .noneOS:
             return nil // XCFrameworks do not support any of these platforms today.
-        case .macOS:
+        case .macosx:
             return "macos"
+        case .ios:
+            return "ios"
+        case .tvos:
+            return "tvos"
+        case .watchos:
+            return "watchos"
+        default:
+            return nil // XCFrameworks do not support any of these platforms today.
+        }
+    }
+}
+
+extension Triple.Environment {
+    fileprivate var asXCFrameworkPlatformVariantString: String? {
+        switch self {
+        case .simulator:
+            return "simulator"
+        case .macabi:
+            return "maccatalyst"
+        default:
+            return nil // XCFrameworks do not support any of these platform variants today.
         }
     }
 }

@@ -59,12 +59,7 @@
 ///     ]
 /// )
 /// ```
-public class Product: Encodable {
-    private enum ProductCodingKeys: String, CodingKey {
-        case name
-        case type = "product_type"
-    }
-
+public class Product {
     /// The name of the package product.
     public let name: String
 
@@ -73,11 +68,7 @@ public class Product: Encodable {
     }
 
     /// The executable product of a Swift package.
-    public final class Executable: Product {
-        private enum ExecutableCodingKeys: CodingKey {
-            case targets
-        }
-
+    public final class Executable: Product, @unchecked Sendable {
         /// The names of the targets in this product.
         public let targets: [String]
 
@@ -85,33 +76,12 @@ public class Product: Encodable {
             self.targets = targets
             super.init(name: name)
         }
-
-        /// Encodes this executable product type into the given encoder.
-        ///
-        /// This function throws an error if any values are invalid for the
-        /// given encoder's format.
-        ///
-        /// - Note: Do not call this function directly. It is public to satisfy conformance to Codable, but it is only for use by internal Swift Package Manager processes.
-        ///
-        /// - Parameter encoder: The encoder to write data to.
-        public override func encode(to encoder: Encoder) throws {
-            try super.encode(to: encoder)
-            var productContainer = encoder.container(keyedBy: ProductCodingKeys.self)
-            try productContainer.encode("executable", forKey: .type)
-            var executableContainer = encoder.container(keyedBy: ExecutableCodingKeys.self)
-            try executableContainer.encode(targets, forKey: .targets)
-        }
     }
 
     /// The library product of a Swift package.
-    public final class Library: Product {
-        private enum LibraryCodingKeys: CodingKey {
-            case type
-            case targets
-        }
-
+    public final class Library: Product, @unchecked Sendable {
         /// The different types of a library product.
-        public enum LibraryType: String, Encodable {
+        public enum LibraryType: String {
             /// A statically linked library.
             case `static`
             /// A dynamically linked library.
@@ -132,46 +102,16 @@ public class Product: Encodable {
             self.targets = targets
             super.init(name: name)
         }
-
-        /// Encodes this value into the given encoder.
-        ///
-        /// If the value fails to encode anything, `encoder` will encode an
-        /// empty keyed container in its place.
-        ///
-        /// This function throws an error if any values are invalid for the
-        /// given encoder's format.
-        ///
-        /// - Parameter encoder: The encoder to write data to.
-        public override func encode(to encoder: Encoder) throws {
-            try super.encode(to: encoder)
-            var productContainer = encoder.container(keyedBy: ProductCodingKeys.self)
-            try productContainer.encode("library", forKey: .type)
-            var libraryContainer = encoder.container(keyedBy: LibraryCodingKeys.self)
-            try libraryContainer.encode(type, forKey: .type)
-            try libraryContainer.encode(targets, forKey: .targets)
-        }
     }
 
-    /// The plugin product of a Swift package.
-    public final class Plugin: Product {
-        private enum PluginCodingKeys: CodingKey {
-            case targets
-        }
-
-        /// The name of the plugin target to vend as a product.
+    /// The plug-in product of a Swift package.
+    public final class Plugin: Product, @unchecked Sendable {
+        /// The name of the plug-in target to vend as a product.
         public let targets: [String]
 
         init(name: String, targets: [String]) {
             self.targets = targets
             super.init(name: name)
-        }
-
-        public override func encode(to encoder: Encoder) throws {
-            try super.encode(to: encoder)
-            var productContainer = encoder.container(keyedBy: ProductCodingKeys.self)
-            try productContainer.encode("plugin", forKey: .type)
-            var pluginContainer = encoder.container(keyedBy: PluginCodingKeys.self)
-            try pluginContainer.encode(targets, forKey: .targets)
         }
     }
 
@@ -191,8 +131,7 @@ public class Product: Encodable {
     ///     don't support both linkage types, use
     ///     ``Product/Library/LibraryType/static`` or
     ///     ``Product/Library/LibraryType/dynamic`` for this parameter.
-    ///
-    ///  - targets: The targets that are bundled into a library product.
+    ///   - targets: The targets that are bundled into a library product.
     ///
     /// - Returns: A `Product` instance.
     public static func library(
@@ -209,7 +148,7 @@ public class Product: Encodable {
     ///   - name: The name of the executable product.
     ///   - targets: The targets to bundle into an executable product.
     /// - Returns: A `Product` instance.
-public static func executable(
+    public static func executable(
         name: String,
         targets: [String]
     ) -> Product {
@@ -227,25 +166,11 @@ public static func executable(
     ///   - name: The name of the plugin product.
     ///   - targets: The plugin targets to vend as a product.
     /// - Returns: A `Product` instance.
-@available(_PackageDescription, introduced: 5.5)
+    @available(_PackageDescription, introduced: 5.5)
     public static func plugin(
         name: String,
         targets: [String]
     ) -> Product {
         return Plugin(name: name, targets: targets)
-    }
-
-    /// Encodes this value into the given encoder.
-    ///
-    /// If the value fails to encode anything, `encoder` will encode an empty
-    /// keyed container in its place.
-    ///
-    /// This function throws an error if any values are invalid for the given
-    /// encoder's format.
-    ///
-    /// - Parameter encoder: The encoder to write data to.
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: ProductCodingKeys.self)
-        try container.encode(name, forKey: .name)
     }
 }

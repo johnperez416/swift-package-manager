@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import Foundation
-import TSCBasic
 
 public struct PackageIndexConfiguration: Equatable {
     public var url: URL?
@@ -33,7 +33,7 @@ public struct PackageIndexConfiguration: Equatable {
     ) {
         self.url = url
         self.searchResultMaxItemsCount = searchResultMaxItemsCount ?? 50
-        self.cacheDirectory = cacheDirectory.map(resolveSymlinks) ?? localFileSystem.swiftPMCacheDirectory.appending(components: "package-metadata")
+        self.cacheDirectory = (try? cacheDirectory.map(resolveSymlinks)) ?? (try? localFileSystem.swiftPMCacheDirectory.appending(components: "package-metadata")) ?? .root
         self.cacheTTLInSeconds = disableCache ? -1 : (cacheTTLInSeconds ?? 3600)
         self.cacheMaxSizeInMegabytes = cacheMaxSizeInMegabytes ?? 10
     }
@@ -71,7 +71,7 @@ public struct PackageIndexConfigurationStorage {
         }
         let container = StorageModel.Container(configuration)
         let buffer = try encoder.encode(container)
-        try self.fileSystem.writeFileContents(self.path, bytes: ByteString(buffer), atomically: true)
+        try self.fileSystem.writeFileContents(self.path, data: buffer)
     }
     
     @discardableResult

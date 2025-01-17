@@ -32,10 +32,22 @@ extension Package {
             return product
         }
     }
+
+    @available(_PackageDescription, introduced: 5.9)
+    public var sourceModules: [SourceModuleTarget] {
+        return targets.compactMap { $0.sourceModule }
+    }
+}
+
+extension Product {
+    @available(_PackageDescription, introduced: 5.9)
+    public var sourceModules: [SourceModuleTarget] {
+        return targets.compactMap { $0.sourceModule }
+    }
 }
 
 extension Target {
-    /// The transitive closure of all the targets on which the reciver depends,
+    /// The transitive closure of all the targets on which the receiver depends,
     /// ordered such that every dependency appears before any other target that
     /// depends on it (i.e. in "topological sort order").
     public var recursiveTargetDependencies: [Target] {
@@ -55,6 +67,12 @@ extension Target {
         }
         return self.dependencies.flatMap{ dependencyClosure(for: $0) }
     }
+
+    /// Convenience accessor which casts the receiver to`SourceModuleTarget` if possible.
+    @available(_PackageDescription, introduced: 5.9)
+    public var sourceModule: SourceModuleTarget? {
+        return self as? SourceModuleTarget
+    }
 }
 
 extension Package {
@@ -73,6 +91,6 @@ extension SourceModuleTarget {
     /// A possibly empty list of source files in the target that have the given
     /// filename suffix.
     public func sourceFiles(withSuffix suffix: String) -> FileList {
-        return FileList(self.sourceFiles.filter{ $0.path.lastComponent.hasSuffix(suffix) })
+        return FileList(self.sourceFiles.filter{ $0.url.lastPathComponent.hasSuffix(suffix) })
     }
 }

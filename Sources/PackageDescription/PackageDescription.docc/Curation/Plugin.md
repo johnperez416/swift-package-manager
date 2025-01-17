@@ -2,10 +2,6 @@
 
 ## Topics
 
-### Describing a Plugin Product
+### Describing a plug-in product
 
 - ``targets``
-
-### Encoding and Decoding
-
-- ``encode(to:)``

@@ -11,16 +11,15 @@
 //===----------------------------------------------------------------------===//
 
 import Basics
-import TSCBasic
 
-import struct TSCUtility.PolymorphicCodableArray
-
-public class Product: Codable {
+public class Product: Identifiable {
     /// The name of the product.
     public let name: String
 
+    public var id: String { name }
+
     /// Fully qualified name for this product: package ID + name of this product
-    public let ID: String
+    public let identity: String
 
     /// The type of product to create.
     public let type: ProductType
@@ -29,34 +28,33 @@ public class Product: Codable {
     ///
     /// This is never empty, and is only the targets which are required to be in
     /// the product, but not necessarily their transitive dependencies.
-    @PolymorphicCodableArray
-    public var targets: [Target]
+    public var modules: [Module]
 
-    /// The path to test manifest file.
-    public let testManifest: AbsolutePath?
+    /// The path to test entry point file.
+    public let testEntryPointPath: AbsolutePath?
 
     /// The suffix for REPL product name.
     public static let replProductSuffix: String = "__REPL"
 
-    public init(package: PackageIdentity, name: String, type: ProductType, targets: [Target], testManifest: AbsolutePath? = nil) throws {
-        guard !targets.isEmpty else {
+    public init(package: PackageIdentity, name: String, type: ProductType, modules: [Module], testEntryPointPath: AbsolutePath? = nil) throws {
+        guard !modules.isEmpty else {
             throw InternalError("Targets cannot be empty")
         }
         if type == .executable {
-            guard targets.filter({ $0.type == .executable }).count == 1 else {
+            guard modules.executables.count == 1 else {
                 throw InternalError("Executable products should have exactly one executable target.")
             }
         }
-        if testManifest != nil {
+        if testEntryPointPath != nil {
             guard type == .test else {
-                throw InternalError("Test manifest should only be set on test products")
+                throw InternalError("Test entry point path should only be set on test products")
             }
         }
         self.name = name
         self.type = type
-        self.ID = package.description.lowercased() + "_" + name
-        self._targets = .init(wrappedValue: targets)
-        self.testManifest = testManifest
+        self.identity = package.description.lowercased() + "_" + name
+        self.modules = modules
+        self.testEntryPointPath = testEntryPointPath
     }
 }
 
@@ -71,10 +69,10 @@ extension Product: Hashable {
 }
 
 /// The type of product.
-public enum ProductType: Equatable, Hashable {
+public enum ProductType: Equatable, Hashable, Sendable {
 
     /// The type of library.
-    public enum LibraryType: String, Codable {
+    public enum LibraryType: String, Codable, Sendable {
 
         /// Static library.
         case `static`
@@ -101,6 +99,9 @@ public enum ProductType: Equatable, Hashable {
     /// A test product.
     case test
 
+    /// A macro product.
+    case `macro`
+
     public var isLibrary: Bool {
         guard case .library = self else { return false }
         return true
@@ -113,7 +114,7 @@ public enum ProductType: Equatable, Hashable {
 /// Any product which matches the filter will be used for dependency resolution, whereas unrequested products will be ignored.
 ///
 /// Requested products need not actually exist in the package. Under certain circumstances, the resolver may request names whose package of origin are unknown. The intended package will recognize and fulfill the request; packages that do not know what it is will simply ignore it.
-public enum ProductFilter: Equatable, Hashable {
+public enum ProductFilter: Equatable, Hashable, Sendable {
 
     /// All products, targets, and tests are requested.
     ///
@@ -194,6 +195,8 @@ extension ProductType: CustomStringConvertible {
             }
         case .plugin:
             return "plugin"
+        case .macro:
+            return "macro"
         }
     }
 }
@@ -213,7 +216,7 @@ extension ProductFilter: CustomStringConvertible {
 
 extension ProductType: Codable {
     private enum CodingKeys: String, CodingKey {
-        case library, executable, snippet, plugin, test
+        case library, executable, snippet, plugin, test, `macro`
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -230,6 +233,8 @@ extension ProductType: Codable {
             try container.encodeNil(forKey: .plugin)
         case .test:
             try container.encodeNil(forKey: .test)
+        case .macro:
+            try container.encodeNil(forKey: .macro)
         }
     }
 
@@ -251,6 +256,8 @@ extension ProductType: Codable {
             self = .snippet
         case .plugin:
             self = .plugin
+        case .macro:
+            self = .macro
         }
     }
 }

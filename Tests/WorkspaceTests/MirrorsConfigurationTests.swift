@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2020 Apple Inc. and the Swift project authors
+// Copyright (c) 2020-2024 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-import SPMTestSupport
-import TSCBasic
+import Basics
+import _InternalTestSupport
 import Workspace
 import XCTest
 
@@ -23,25 +23,27 @@ final class MirrorsConfigurationTests: XCTestCase {
         let originalURL = "https://github.com/apple/swift-argument-parser.git"
         let mirrorURL = "https://github.com/mona/swift-argument-parser.git"
 
-        try fs.writeFileContents(configFile) {
-            $0 <<< """
+        try fs.createDirectory(configFile.parentDirectory)
+        try fs.writeFileContents(
+            configFile,
+            string: """
+            {
+              "object": [
                 {
-                  "object": [
-                    {
-                      "mirror": "\(mirrorURL)",
-                      "original": "\(originalURL)"
-                    }
-                  ],
-                  "version": 1
+                  "mirror": "\(mirrorURL)",
+                  "original": "\(originalURL)"
                 }
-                """
-        }
+              ],
+              "version": 1
+            }
+            """
+        )
 
         let config = Workspace.Configuration.MirrorsStorage(path: configFile, fileSystem: fs, deleteWhenEmpty: true)
         let mirrors = try config.get()
 
-        XCTAssertEqual(mirrors.mirrorURL(for: originalURL),mirrorURL)
-        XCTAssertEqual(mirrors.originalURL(for: mirrorURL), originalURL)
+        XCTAssertEqual(mirrors.mirror(for: originalURL),mirrorURL)
+        XCTAssertEqual(mirrors.original(for: mirrorURL), originalURL)
     }
 
     func testThrowsWhenNotFound() throws {
@@ -52,7 +54,7 @@ final class MirrorsConfigurationTests: XCTestCase {
         let mirrors = try config.get()
 
         XCTAssertThrows(StringError("Mirror not found for 'https://github.com/apple/swift-argument-parser.git'")) {
-            try mirrors.unset(originalOrMirrorURL: "https://github.com/apple/swift-argument-parser.git")
+            try mirrors.unset(originalOrMirror: "https://github.com/apple/swift-argument-parser.git")
         }
     }
 
@@ -69,12 +71,12 @@ final class MirrorsConfigurationTests: XCTestCase {
         let mirrorURL = "https://github.com/mona/swift-argument-parser.git"
 
         try config.apply{ mirrors in
-            mirrors.set(mirrorURL: mirrorURL, forURL: originalURL)
+            try mirrors.set(mirror: mirrorURL, for: originalURL)
         }
         XCTAssertTrue(fs.exists(configFile))
 
         try config.apply{ mirrors in
-            try mirrors.unset(originalOrMirrorURL: originalURL)
+            try mirrors.unset(originalOrMirror: originalURL)
         }
         XCTAssertFalse(fs.exists(configFile))
     }
@@ -92,12 +94,12 @@ final class MirrorsConfigurationTests: XCTestCase {
         let mirrorURL = "https://github.com/mona/swift-argument-parser.git"
 
         try config.apply{ mirrors in
-            mirrors.set(mirrorURL: mirrorURL, forURL: originalURL)
+            try mirrors.set(mirror: mirrorURL, for: originalURL)
         }
         XCTAssertTrue(fs.exists(configFile))
 
         try config.apply{ mirrors in
-            try mirrors.unset(originalOrMirrorURL: originalURL)
+            try mirrors.unset(originalOrMirror: originalURL)
         }
         XCTAssertTrue(fs.exists(configFile))
         XCTAssertTrue(try config.get().isEmpty)
@@ -120,12 +122,12 @@ final class MirrorsConfigurationTests: XCTestCase {
         let mirror1URL = "https://github.com/mona/swift-argument-parser.git"
 
         try config.applyShared { mirrors in
-            mirrors.set(mirrorURL: mirror1URL, forURL: original1URL)
+            try mirrors.set(mirror: mirror1URL, for: original1URL)
         }
 
         XCTAssertEqual(config.mirrors.count, 1)
-        XCTAssertEqual(config.mirrors.mirrorURL(for: original1URL), mirror1URL)
-        XCTAssertEqual(config.mirrors.originalURL(for: mirror1URL), original1URL)
+        XCTAssertEqual(config.mirrors.mirror(for: original1URL), mirror1URL)
+        XCTAssertEqual(config.mirrors.original(for: mirror1URL), original1URL)
 
         // now write to local location
 
@@ -133,15 +135,15 @@ final class MirrorsConfigurationTests: XCTestCase {
         let mirror2URL = "https://github.com/mona/swift-nio.git"
 
         try config.applyLocal { mirrors in
-            mirrors.set(mirrorURL: mirror2URL, forURL: original2URL)
+            try mirrors.set(mirror: mirror2URL, for: original2URL)
         }
 
         XCTAssertEqual(config.mirrors.count, 1)
-        XCTAssertEqual(config.mirrors.mirrorURL(for: original2URL), mirror2URL)
-        XCTAssertEqual(config.mirrors.originalURL(for: mirror2URL), original2URL)
+        XCTAssertEqual(config.mirrors.mirror(for: original2URL), mirror2URL)
+        XCTAssertEqual(config.mirrors.original(for: mirror2URL), original2URL)
 
         // should not see the shared any longer
-        XCTAssertEqual(config.mirrors.mirrorURL(for: original1URL), nil)
-        XCTAssertEqual(config.mirrors.originalURL(for: mirror1URL), nil)
+        XCTAssertEqual(config.mirrors.mirror(for: original1URL), nil)
+        XCTAssertEqual(config.mirrors.original(for: mirror1URL), nil)
     }
 }

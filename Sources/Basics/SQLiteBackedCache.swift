@@ -12,17 +12,17 @@
 
 import Foundation
 
-import TSCBasic
-import struct TSCUtility.SQLite
+import protocol TSCBasic.Closable
+import var TSCBasic.localFileSystem
 
 /// SQLite backed persistent cache.
-public final class SQLiteBackedCache<Value: Codable>: Closable {
-    public typealias Key = String
+package final class SQLiteBackedCache<Value: Codable>: Closable {
+    package typealias Key = String
 
-    public let tableName: String
-    public let fileSystem: TSCBasic.FileSystem
-    public let location: SQLite.Location
-    public let configuration: SQLiteBackedCacheConfiguration
+    package let tableName: String
+    package let fileSystem: FileSystem
+    package let location: SQLite.Location
+    package let configuration: SQLiteBackedCacheConfiguration
 
     private var state = State.idle
     private let stateLock = NSLock()
@@ -36,7 +36,7 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
     ///   - tableName: The SQLite table name. Must follow SQLite naming rules (e.g., no spaces).
     ///   - location: SQLite.Location
     ///   - configuration: Optional. Configuration for the cache.
-    public init(tableName: String, location: SQLite.Location, configuration: SQLiteBackedCacheConfiguration = .init()) {
+    package init(tableName: String, location: SQLite.Location, configuration: SQLiteBackedCacheConfiguration = .init()) {
         self.tableName = tableName
         self.location = location
         switch self.location {
@@ -56,7 +56,11 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
     ///   - tableName: The SQLite table name. Must follow SQLite naming rules (e.g., no spaces).
     ///   - path: The path of the SQLite database.
     ///   - configuration: Optional. Configuration for the cache.
-    public convenience init(tableName: String, path: AbsolutePath, configuration: SQLiteBackedCacheConfiguration = .init()) {
+    package convenience init(
+        tableName: String,
+        path: AbsolutePath,
+        configuration: SQLiteBackedCacheConfiguration = .init()
+    ) {
         self.init(tableName: tableName, location: .path(path), configuration: configuration)
     }
 
@@ -70,7 +74,7 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
         }
     }
 
-    public func close() throws {
+    package func close() throws {
         try self.withStateLock {
             if case .connected(let db) = self.state {
                 try db.close()
@@ -79,13 +83,18 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
         }
     }
 
-    public func put(key: Key, value: Value, replace: Bool = false, observabilityScope: ObservabilityScope? = nil) throws {
+    private func put(
+        rawKey key: SQLite.SQLiteValue,
+        value: Value,
+        replace: Bool = false,
+        observabilityScope: ObservabilityScope? = nil
+    ) throws {
         do {
             let query = "INSERT OR \(replace ? "REPLACE" : "IGNORE") INTO \(self.tableName) VALUES (?, ?);"
-            try self.executeStatement(query) { statement -> Void in
+            try self.executeStatement(query) { statement in
                 let data = try self.jsonEncoder.encode(value)
                 let bindings: [SQLite.SQLiteValue] = [
-                    .string(key),
+                    key,
                     .blob(data),
                 ]
                 try statement.bind(bindings)
@@ -95,17 +104,42 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
             if !self.configuration.truncateWhenFull {
                 throw error
             }
-            observabilityScope?.emit(warning: "truncating \(self.tableName) cache database since it reached max size of \(self.configuration.maxSizeInBytes ?? 0) bytes")
-            try self.executeStatement("DELETE FROM \(self.tableName);") { statement -> Void in
+            observabilityScope?
+                .emit(
+                    warning: """
+                    truncating \(self.tableName) cache database since it reached max size of \(
+                        self.configuration.maxSizeInBytes ?? 0
+                    ) bytes
+                    """
+                )
+            try self.executeStatement("DELETE FROM \(self.tableName);") { statement in
                 try statement.step()
             }
-            try self.put(key: key, value: value, replace: replace, observabilityScope: observabilityScope)
+            try self.put(rawKey: key, value: value, replace: replace, observabilityScope: observabilityScope)
         } catch {
             throw error
         }
     }
 
-    public func get(key: Key) throws -> Value? {
+    package func put(
+        blobKey key: some Sequence<UInt8>,
+        value: Value,
+        replace: Bool = false,
+        observabilityScope: ObservabilityScope? = nil
+    ) throws {
+        try self.put(rawKey: .blob(Data(key)), value: value, observabilityScope: observabilityScope)
+    }
+
+    package func put(
+        key: Key,
+        value: Value,
+        replace: Bool = false,
+        observabilityScope: ObservabilityScope? = nil
+    ) throws {
+        try self.put(rawKey: .string(key), value: value, replace: replace, observabilityScope: observabilityScope)
+    }
+
+    package func get(key: Key) throws -> Value? {
         let query = "SELECT value FROM \(self.tableName) WHERE key = ? LIMIT 1;"
         return try self.executeStatement(query) { statement -> Value? in
             try statement.bind([.string(key)])
@@ -116,7 +150,18 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
         }
     }
 
-    public func remove(key: Key) throws {
+    package func get(blobKey key: some Sequence<UInt8>) throws -> Value? {
+        let query = "SELECT value FROM \(self.tableName) WHERE key = ? LIMIT 1;"
+        return try self.executeStatement(query) { statement -> Value? in
+            try statement.bind([.blob(Data(key))])
+            let data = try statement.step()?.blob(at: 0)
+            return try data.flatMap {
+                try self.jsonDecoder.decode(Value.self, from: $0)
+            }
+        }
+    }
+
+    package func remove(key: Key) throws {
         let query = "DELETE FROM \(self.tableName) WHERE key = ?;"
         try self.executeStatement(query) { statement in
             try statement.bind([.string(key)])
@@ -124,12 +169,13 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
         }
     }
 
+    @discardableResult
     private func executeStatement<T>(_ query: String, _ body: (SQLite.PreparedStatement) throws -> T) throws -> T {
         try self.withDB { db in
             let result: Result<T, Error>
             let statement = try db.prepare(query: query)
             do {
-                result = .success(try body(statement))
+                result = try .success(body(statement))
             } catch {
                 result = .failure(error)
             }
@@ -192,7 +238,7 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
         switch self.location {
         case .path(let path):
             if !self.fileSystem.exists(path.parentDirectory) {
-                try self.fileSystem.createDirectory(path.parentDirectory)
+                try self.fileSystem.createDirectory(path.parentDirectory, recursive: true)
             }
             return try self.fileSystem.withLock(on: path, type: .exclusive, body)
         case .memory, .temporary:
@@ -207,12 +253,12 @@ public final class SQLiteBackedCache<Value: Codable>: Closable {
     }
 }
 
-public struct SQLiteBackedCacheConfiguration {
-    public var truncateWhenFull: Bool
+package struct SQLiteBackedCacheConfiguration {
+    package var truncateWhenFull: Bool
 
     fileprivate var underlying: SQLite.Configuration
 
-    public init() {
+    package init() {
         self.underlying = .init()
         self.truncateWhenFull = true
         self.maxSizeInMegabytes = 100
@@ -220,7 +266,7 @@ public struct SQLiteBackedCacheConfiguration {
         self.busyTimeoutMilliseconds = 1000
     }
 
-    public var maxSizeInMegabytes: Int? {
+    package var maxSizeInMegabytes: Int? {
         get {
             self.underlying.maxSizeInMegabytes
         }
@@ -229,7 +275,7 @@ public struct SQLiteBackedCacheConfiguration {
         }
     }
 
-    public var maxSizeInBytes: Int? {
+    package var maxSizeInBytes: Int? {
         get {
             self.underlying.maxSizeInBytes
         }
@@ -238,7 +284,7 @@ public struct SQLiteBackedCacheConfiguration {
         }
     }
 
-    public var busyTimeoutMilliseconds: Int32 {
+    package var busyTimeoutMilliseconds: Int32 {
         get {
             self.underlying.busyTimeoutMilliseconds
         }

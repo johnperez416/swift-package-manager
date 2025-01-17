@@ -11,6 +11,7 @@
   "packages": [
     {
       "url": "https://www.example.com/repos/RepoOne.git",
+      "identity": "repos.one",
       "summary": "Package One",
       "keywords": ["sample package"],
       "readmeURL": "https://www.example.com/repos/RepoOne/README",
@@ -64,6 +65,15 @@
           "license": {
             "name": "Apache-2.0",
             "url": "https://www.example.com/repos/RepoOne/LICENSE"
+          },
+          "author": {
+            "name": "J. Appleseed"
+          },
+          "signer": {
+            "type": "ADP",
+            "commonName": "J. Appleseed",
+            "organizationalUnitName": "A1",
+            "organizationName": "Appleseed Inc."
           },
           "createdAt": "2020-10-21T09:25:36Z"
         }

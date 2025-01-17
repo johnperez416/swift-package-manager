@@ -11,8 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 @testable import Basics
-import SPMTestSupport
-import TSCBasic
+import _InternalTestSupport
 import XCTest
 
 // TODO: remove when transition to new diagnostics system is complete
@@ -265,48 +264,6 @@ final class ObservabilitySystemTest: XCTestCase {
                 XCTAssertEqual(diagnostic?.metadata?.testKey2, diagnosticMergedMetadata.testKey2)
                 XCTAssertEqual(diagnostic?.metadata?.testKey3, diagnosticMergedMetadata.testKey3)
             }
-        }
-    }
-
-    @available(*, deprecated, message: "temporary for transition DiagnosticsEngine -> DiagnosticsEmitter")
-    func testBridging() throws {
-        do {
-            let collector = Collector()
-            let observabilitySystem = ObservabilitySystem(collector)
-            let diagnosticsEngine = observabilitySystem.topScope.makeDiagnosticsEngine()
-
-            let data = TestData()
-            let location = TestLocation()
-
-            diagnosticsEngine.emit(.error(data), location: location)
-
-            XCTAssertEqual(collector.diagnostics.count, 1)
-            XCTAssertEqual(collector.diagnostics.first!.metadata?.legacyDiagnosticLocation?.description, location.description)
-            XCTAssertEqual(collector.diagnostics.first!.metadata?.legacyDiagnosticData?.underlying.description, data.description)
-        }
-
-        do {
-            let diagnosticsEngine1 = DiagnosticsEngine()
-            let observabilitySystem = ObservabilitySystem(diagnosticEngine: diagnosticsEngine1)
-            let diagnosticsEngine2 = observabilitySystem.topScope.makeDiagnosticsEngine()
-
-            let data = TestData()
-            let location = TestLocation()
-
-            diagnosticsEngine2.emit(.error(data), location: location)
-
-            XCTAssertEqual(diagnosticsEngine1.diagnostics.count, 1)
-            XCTAssertEqual(diagnosticsEngine1.diagnostics.first!.message.data as? TestData, data)
-            XCTAssertEqual(diagnosticsEngine1.diagnostics.first!.location as? TestLocation, location)
-        }
-
-        struct TestData: DiagnosticData, Equatable {
-            var description: String = UUID().uuidString
-        }
-
-        struct TestLocation: DiagnosticLocation, Equatable {
-            var description: String = UUID().uuidString
-
         }
     }
 

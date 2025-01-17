@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift open source project
 //
-// Copyright (c) 2020-2021 Apple Inc. and the Swift project authors
+// Copyright (c) 2020-2022 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import Foundation
-
 
 /// Extensions on Manifest for generating source code expressing its contents
 /// in canonical declarative form.  Note that this bakes in the results of any
@@ -24,19 +24,24 @@ extension Manifest {
     /// in canonical declarative form.
     /// 
     /// - Parameters:
+    ///   - packageDirectory: Directory of the manifest's package (for purposes of making strings relative).
     ///   - toolsVersionHeaderComment: Optional string to add to the `swift-tools-version` header (it will be ignored).
     ///   - additionalImportModuleNames: Names of any modules to import besides PackageDescription (would commonly contain custom product type definitions).
     ///   - customProductTypeSourceGenerator: Closure that will be called once for each custom product type in the manifest; it should return a SourceCodeFragment for the product type.
     /// 
     /// Returns: a string containing the full source code for the manifest.
     public func generateManifestFileContents(
+        packageDirectory: AbsolutePath,
         toolsVersionHeaderComment: String? = .none,
         additionalImportModuleNames: [String] = [],
         customProductTypeSourceGenerator: ManifestCustomProductTypeSourceGenerator? = .none
     ) rethrows -> String {
         // Generate the source code fragment for the top level of the package
         // expression.
-        let packageExprFragment = try SourceCodeFragment(from: self, customProductTypeSourceGenerator: customProductTypeSourceGenerator)
+        let packageExprFragment = try SourceCodeFragment(
+            from: self,
+            packageDirectory: packageDirectory,
+            customProductTypeSourceGenerator: customProductTypeSourceGenerator)
         
         // Generate the source code from the module names and code fragment.
         // We only write out the major and minor (not patch) versions of the
@@ -50,23 +55,21 @@ extension Manifest {
             let package = \(packageExprFragment.generateSourceCode())
             """
     }
-    
-    /// Generates and returns a string containing the contents of the manifest
-    /// in canonical declarative form.
-    public var generatedManifestFileContents: String {
-        return self.generateManifestFileContents(customProductTypeSourceGenerator: nil)
-    }
 }
 
-/// Constructs and returns a SourceCodeFragment that represents the instantiation of a custom product type with the specified identifer and having the given serialized parameters (the contents of whom are a private matter between the serialized form in PackageDescription and the client). The generated source code should, if evaluated as a part of a package manifest, result in the same serialized parameters.
+/// Constructs and returns a SourceCodeFragment that represents the instantiation of a custom product type with the specified identifier and having the given serialized parameters (the contents of whom are a private matter between the serialized form in PackageDescription and the client). The generated source code should, if evaluated as a part of a package manifest, result in the same serialized parameters.
 public typealias ManifestCustomProductTypeSourceGenerator = (ProductDescription) throws -> SourceCodeFragment?
 
 
 /// Convenience initializers for package manifest structures.
 fileprivate extension SourceCodeFragment {
-    
+
     /// Instantiates a SourceCodeFragment to represent an entire manifest.
-    init(from manifest: Manifest, customProductTypeSourceGenerator: ManifestCustomProductTypeSourceGenerator?) rethrows {
+    init(
+        from manifest: Manifest,
+        packageDirectory: AbsolutePath,
+        customProductTypeSourceGenerator: ManifestCustomProductTypeSourceGenerator?
+    ) rethrows {
         var params: [SourceCodeFragment] = []
         
         params.append(SourceCodeFragment(key: "name", string: manifest.displayName))
@@ -95,7 +98,7 @@ fileprivate extension SourceCodeFragment {
         }
 
         if !manifest.dependencies.isEmpty {
-            let nodes = manifest.dependencies.map{ SourceCodeFragment(from: $0) }
+            let nodes = manifest.dependencies.map{ SourceCodeFragment(from: $0, pathAnchor: packageDirectory) }
             params.append(SourceCodeFragment(key: "dependencies", subnodes: nodes))
         }
 
@@ -138,26 +141,30 @@ fileprivate extension SourceCodeFragment {
             self.init(enum: "tvOS", string: platform.version)
         case "watchos":
             self.init(enum: "watchOS", string: platform.version)
+        case "visionos":
+            self.init(enum: "visionOS", string: platform.version)
         case "driverkit":
-            self.init(enum: "DriverKit", string: platform.version)
+            self.init(enum: "driverKit", string: platform.version)
         default:
             self.init(enum: "custom", subnodes: [ .init(string: platform.platformName), .init(key: "versionString", string: platform.version) ])
         }
     }
     
     /// Instantiates a SourceCodeFragment to represent a single package dependency.
-    init(from dependency: PackageDependency) {
+    init(from dependency: PackageDependency, pathAnchor: AbsolutePath) {
         var params: [SourceCodeFragment] = []
-        if let explicitName = dependency.explicitNameForTargetDependencyResolutionOnly {
+        if let explicitName = dependency.explicitNameForModuleDependencyResolutionOnly {
             params.append(SourceCodeFragment(key: "name", string: explicitName))
         }
         switch dependency {
         case .fileSystem(let settings):
-            params.append(SourceCodeFragment(key: "path", string: settings.path.pathString))
+            let relPath = settings.path.relative(to: pathAnchor)
+            params.append(SourceCodeFragment(key: "path", string: relPath.pathString))
         case .sourceControl(let settings):
             switch settings.location {
-            case .local(let path):
-                params.append(SourceCodeFragment(key: "url", string: path.pathString))
+            case .local(let absPath):
+                let relPath = absPath.relative(to: pathAnchor)
+                params.append(SourceCodeFragment(key: "url", string: relPath.pathString))
             case .remote(let url):
                 params.append(SourceCodeFragment(key: "url", string: url.absoluteString))
             }
@@ -194,7 +201,7 @@ fileprivate extension SourceCodeFragment {
         else {
             var params: [SourceCodeFragment] = []
             params.append(SourceCodeFragment(key: "name", string: product.name))
-            if !product.targets.isEmpty {
+            if !product.targets.isEmpty && !product.type.isLibrary {
                 params.append(SourceCodeFragment(key: "targets", strings: product.targets))
             }
             switch product.type {
@@ -202,19 +209,24 @@ fileprivate extension SourceCodeFragment {
                 if type != .automatic {
                     params.append(SourceCodeFragment(key: "type", enum: type.rawValue))
                 }
-	            self.init(enum: "library", subnodes: params, multiline: true)
-	        case .executable:
-	            self.init(enum: "executable", subnodes: params, multiline: true)
-	        case .snippet:
-	            self.init(enum: "sample", subnodes: params, multiline: true)
-	        case .plugin:
-	            self.init(enum: "plugin", subnodes: params, multiline: true)
-	        case .test:
-	            self.init(enum: "test", subnodes: params, multiline: true)
+                if !product.targets.isEmpty {
+                    params.append(SourceCodeFragment(key: "targets", strings: product.targets))
+                }
+                self.init(enum: "library", subnodes: params, multiline: true)
+            case .executable:
+                self.init(enum: "executable", subnodes: params, multiline: true)
+            case .snippet:
+                self.init(enum: "sample", subnodes: params, multiline: true)
+            case .plugin:
+                self.init(enum: "plugin", subnodes: params, multiline: true)
+            case .test:
+                self.init(enum: "test", subnodes: params, multiline: true)
+            case .macro:
+                self.init(enum: "macro", subnodes: params, multiline: true)
             }
         }
     }
-    
+
     /// Instantiates a SourceCodeFragment to represent a single target.
     init(from target: TargetDescription) {
         var params: [SourceCodeFragment] = []
@@ -306,6 +318,8 @@ fileprivate extension SourceCodeFragment {
             self.init(enum: "binaryTarget", subnodes: params, multiline: true)
         case .plugin:
             self.init(enum: "plugin", subnodes: params, multiline: true)
+        case .macro:
+            self.init(enum: "macro", subnodes: params, multiline: true)
         }
     }
 
@@ -316,27 +330,27 @@ fileprivate extension SourceCodeFragment {
         switch dependency {
         case .target(name: let name, condition: let condition):
             params.append(SourceCodeFragment(key: "name", string: name))
-            if let condition = condition {
+            if let condition {
                 params.append(SourceCodeFragment(key: "condition", subnode: SourceCodeFragment(from: condition)))
             }
             self.init(enum: "target", subnodes: params)
             
         case .product(name: let name, package: let packageName, moduleAliases: let aliases, condition: let condition):
             params.append(SourceCodeFragment(key: "name", string: name))
-            if let packageName = packageName {
+            if let packageName {
                 params.append(SourceCodeFragment(key: "package", string: packageName))
             }
-            if let aliases = aliases {
+            if let aliases {
                 let vals = aliases.map { SourceCodeFragment(key: $0.key.quotedForPackageManifest, string: $0.value) }
                 params.append(SourceCodeFragment(key: "moduleAliases", subnodes: vals))
             }
-            if let condition = condition {
+            if let condition {
                 params.append(SourceCodeFragment(key: "condition", subnode: SourceCodeFragment(from: condition)))
             }
             self.init(enum: "product", subnodes: params)
             
         case .byName(name: let name, condition: let condition):
-            if let condition = condition {
+            if let condition {
                 params.append(SourceCodeFragment(key: "name", string: name))
                 params.append(SourceCodeFragment(key: "condition", subnode: SourceCodeFragment(from: condition)))
                 self.init(enum: "byName", subnodes: params)
@@ -357,7 +371,8 @@ fileprivate extension SourceCodeFragment {
             case "ios": return SourceCodeFragment(enum: "iOS")
             case "tvos": return SourceCodeFragment(enum: "tvOS")
             case "watchos": return SourceCodeFragment(enum: "watchOS")
-            case "driverkit": return SourceCodeFragment(enum: "DriverKit")
+            case "visionos": return SourceCodeFragment(enum: "visionOS")
+            case "driverkit": return SourceCodeFragment(enum: "driverKit")
             default: return SourceCodeFragment(enum: platformName)
             }
         }
@@ -410,12 +425,14 @@ fileprivate extension SourceCodeFragment {
         params.append(SourceCodeFragment(string: resource.path))
         switch resource.rule {
         case .process(let localization):
-            if let localization = localization {
+            if let localization {
                 params.append(SourceCodeFragment(key: "localization", enum: localization.rawValue))
             }
             self.init(enum: "process", subnodes: params)
         case .copy:
             self.init(enum: "copy", subnodes: params)
+        case .embedInCode:
+            self.init(enum: "embedInCode", subnodes: params)
         }
     }
 
@@ -450,9 +467,30 @@ fileprivate extension SourceCodeFragment {
         }
     }
 
+    init(from networkPermissionScope: TargetDescription.PluginNetworkPermissionScope) {
+        switch networkPermissionScope {
+        case .none:
+            self.init(enum: "none")
+        case .local(let ports):
+            let ports = SourceCodeFragment(key: "ports", subnodes: ports.map { SourceCodeFragment("\($0)") })
+            self.init(enum: "local", subnodes: [ports])
+        case .all(let ports):
+            let ports = SourceCodeFragment(key: "ports", subnodes: ports.map { SourceCodeFragment("\($0)") })
+            self.init(enum: "all", subnodes: [ports])
+        case .docker:
+            self.init(enum: "docker")
+        case .unixDomainSocket:
+            self.init(enum: "unixDomainSocket")
+        }
+    }
+
     /// Instantiates a SourceCodeFragment to represent a single plugin permission.
     init(from permission: TargetDescription.PluginPermission) {
         switch permission {
+        case .allowNetworkConnections(let scope, let reason):
+            let scope = SourceCodeFragment(key: "scope", subnode: .init(from: scope))
+            let reason = SourceCodeFragment(key: "reason", string: reason)
+            self.init(enum: "allowNetworkConnections", subnodes: [scope, reason])
         case .writeToPackageDirectory(let reason):
             let param = SourceCodeFragment(key: "reason", string: reason)
             self.init(enum: "writeToPackageDirectory", subnodes: [param])
@@ -464,7 +502,7 @@ fileprivate extension SourceCodeFragment {
         var params: [SourceCodeFragment] = []
 
         switch setting.kind {
-        case .headerSearchPath(let value), .linkedLibrary(let value), .linkedFramework(let value):
+        case .headerSearchPath(let value), .linkedLibrary(let value), .linkedFramework(let value), .enableUpcomingFeature(let value), .enableExperimentalFeature(let value):
             params.append(SourceCodeFragment(string: value))
             if let condition = setting.condition {
                 params.append(SourceCodeFragment(from: condition))
@@ -481,8 +519,17 @@ fileprivate extension SourceCodeFragment {
                 params.append(SourceCodeFragment(from: condition))
             }
             self.init(enum: setting.kind.name, subnodes: params)
+        case .interoperabilityMode(let lang):
+            params.append(SourceCodeFragment(enum: lang.rawValue))
+            self.init(enum: setting.kind.name, subnodes: params)
         case .unsafeFlags(let values):
             params.append(SourceCodeFragment(strings: values))
+            if let condition = setting.condition {
+                params.append(SourceCodeFragment(from: condition))
+            }
+            self.init(enum: setting.kind.name, subnodes: params)
+        case .swiftLanguageMode(let version):
+            params.append(SourceCodeFragment(from: version))
             if let condition = setting.condition {
                 params.append(SourceCodeFragment(from: condition))
             }
@@ -591,7 +638,7 @@ public struct SourceCodeFragment {
     
     func generateSourceCode(indent: String = "") -> String {
         var string = literal
-        if let subnodes = subnodes {
+        if let subnodes {
             switch delimiters {
             case .none: break
             case .brackets: string.append("[")
@@ -633,6 +680,14 @@ extension TargetBuildSettingDescription.Kind {
             return "linkedFramework"
         case .unsafeFlags:
             return "unsafeFlags"
+        case .interoperabilityMode:
+            return "interoperabilityMode"
+        case .enableUpcomingFeature:
+            return "enableUpcomingFeature"
+        case .enableExperimentalFeature:
+            return "enableExperimentalFeature"
+        case .swiftLanguageMode:
+            return "swiftLanguageMode"
         }
     }
 }

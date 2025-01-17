@@ -10,66 +10,70 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Basics
 import Foundation
 import OrderedCollections
-import TSCBasic
+import PackageModel
+
+import struct TSCBasic.StringError
 
 /// A collection of dependency mirrors.
 public final class DependencyMirrors: Equatable {
     private var index: [String: String]
+    private var mirrorIndex: [PackageIdentity: PackageIdentity]
     private var reverseIndex: [String: [String]]
     private var visited: OrderedCollections.OrderedSet<String>
     private let lock = NSLock()
 
     public var mapping: [String: String] {
         self.lock.withLock {
-            return self.index
+            self.index
         }
     }
 
-    public init(_ mirrors: [String: String]) {
+    public init(_ mirrors: [String: String] = [:]) throws {
         self.index = mirrors
         self.reverseIndex = [String: [String]]()
+        self.mirrorIndex = [PackageIdentity: PackageIdentity]()
         for entry in mirrors {
             self.reverseIndex[entry.value, default: []].append(entry.key)
+            self.mirrorIndex[try Self.parseLocation(entry.key)] = try Self.parseLocation(entry.value)
         }
         self.visited = .init()
     }
 
-    @available(*, deprecated)
-    private convenience init(_ mirrors: [Mirror]) {
-        self.init(Dictionary(mirrors.map({ ($0.original, $0.mirror) }), uniquingKeysWith: { first, _ in first }))
-    }
-
     public static func == (lhs: DependencyMirrors, rhs: DependencyMirrors) -> Bool {
-        return lhs.mapping == rhs.mapping
+        lhs.mapping == rhs.mapping
     }
 
-    /// Sets a mirror URL for the given URL.
+    /// Sets a mirror for the given origin.
     /// - Parameters:
-    ///   - mirrorURL: The mirrored URL
-    ///   - forURL: The original URL
-    public func set(mirrorURL: String, forURL url: String) {
-        self.lock.withLock {
-            self.index[url] = mirrorURL
-            self.reverseIndex[mirrorURL, default: []].append(url)
+    ///   - mirror: The mirror
+    ///   - for: The original
+    public func set(mirror: String, for key: String) throws {
+        try self.lock.withLock {
+            self.index[key] = mirror
+            self.reverseIndex[mirror, default: []].append(key)
+            self.mirrorIndex[try Self.parseLocation(key)] = try Self.parseLocation(mirror)
         }
     }
 
-    /// Unsets a mirror for the given URL.
+    /// Unsets a mirror for the given.
     /// - Parameters:
-    ///   - originalOrMirrorURL: The original URL or the mirrored URL
-    /// - Throws: `Error.mirrorNotFound` if no mirror exists for the provided URL.
-    public func unset(originalOrMirrorURL: String) throws {
+    ///   - originalOrMirror: The original or the mirrored
+    /// - Throws: `Error.mirrorNotFound` if no mirror exists for the provided origin or mirror.
+    public func unset(originalOrMirror: String) throws {
         try self.lock.withLock {
-            if let value = self.index[originalOrMirrorURL] {
-                self.index[originalOrMirrorURL] = nil
+            if let value = self.index[originalOrMirror] {
+                self.index[originalOrMirror] = nil
                 self.reverseIndex[value] = nil
-            } else if let mirror = self.index.first(where: { $0.value == originalOrMirrorURL }) {
+                self.mirrorIndex[try Self.parseLocation(value)] = nil
+            } else if let mirror = self.index.first(where: { $0.value == originalOrMirror }) {
                 self.index[mirror.key] = nil
-                self.reverseIndex[originalOrMirrorURL] = nil
+                self.reverseIndex[originalOrMirror] = nil
+                self.mirrorIndex[try Self.parseLocation(originalOrMirror)] = nil
             } else {
-                throw StringError("Mirror not found for '\(originalOrMirrorURL)'")
+                throw StringError("Mirror not found for '\(originalOrMirror)'")
             }
         }
     }
@@ -77,9 +81,9 @@ public final class DependencyMirrors: Equatable {
     /// Append the content of a different DependencyMirrors into this one
     /// - Parameters:
     ///   - contentsOf: The DependencyMirrors to append from.
-    public func append(contentsOf mirrors: DependencyMirrors) {
-        mirrors.index.forEach {
-            self.set(mirrorURL: $0.value, forURL: $0.key)
+    public func append(contentsOf mirrors: DependencyMirrors) throws {
+        try mirrors.index.forEach {
+            try self.set(mirror: $0.value, for: $0.key)
         }
     }
 
@@ -105,36 +109,36 @@ public final class DependencyMirrors: Equatable {
         }
     }
 
-    /// Returns the mirrored URL for a package dependency URL.
+    /// Returns the mirrored for a package dependency.
     /// - Parameters:
-    ///   - url: The original URL
-    /// - Returns: The mirrored URL, if one exists.
-    public func mirrorURL(for url: String) -> String? {
+    ///   - for: The original
+    /// - Returns: The mirrored, if one exists.
+    public func mirror(for key: String) -> String? {
         self.lock.withLock {
-            let value = self.index[url]
+            let value = self.index[key]
             if value != nil {
                 // record visited mirrors for reverse index lookup sorting
-                self.visited.append(url)
+                self.visited.append(key)
             }
             return value
         }
     }
 
-    /// Returns the effective URL for a package dependency URL.
+    /// Returns the effective value for a package dependency.
     /// - Parameters:
-    ///   - url: The original URL
-    /// - Returns: The mirrored URL if it exists, otherwise the original URL.
-    public func effectiveURL(for url: String) -> String {
-        return self.mirrorURL(for: url) ?? url
+    ///   - for: The original
+    /// - Returns: The mirrored if it exists, otherwise the original.
+    public func effective(for key: String) -> String {
+        self.mirror(for: key) ?? key
     }
 
-    /// Returns the original URL for a mirrored package dependency URL.
+    /// Returns the original for a mirrored package dependency.
     /// - Parameters:
-    ///   - url: The mirror URL
-    /// - Returns: The original URL, if one exists.
-    public func originalURL(for url: String) -> String? {
+    ///   - for: The mirror
+    /// - Returns: The original , if one exists.
+    public func original(for key: String) -> String? {
         self.lock.withLock {
-            let alternatives = self.reverseIndex[url]
+            let alternatives = self.reverseIndex[key]
             // since there are potentially multiple mapping, we need to sort them to produce deterministic results
             let sorted = alternatives?.sorted(by: { lhs, rhs in
                 // check if it was visited (which means it used by the package)
@@ -151,6 +155,20 @@ public final class DependencyMirrors: Equatable {
                 }
             })
             return sorted?.first
+        }
+    }
+
+    public func effectiveIdentity(for identity: PackageIdentity) throws -> PackageIdentity {
+        return mirrorIndex[identity] ?? identity
+    }
+
+    private static func parseLocation(_ location: String) throws -> PackageIdentity {
+        if PackageIdentity.plain(location).isRegistry {
+            return PackageIdentity.plain(location)
+        } else if let path = try? AbsolutePath(validating: location) {
+            return PackageIdentity(path: path)
+        } else {
+            return PackageIdentity(url: SourceControlURL(location))
         }
     }
 }
@@ -181,53 +199,5 @@ extension DependencyMirrors: Collection {
         self.lock.withLock {
             self.index.index(after: index)
         }
-    }
-}
-
-extension DependencyMirrors: ExpressibleByDictionaryLiteral {
-    public convenience init(dictionaryLiteral elements: (String, String)...) {
-        self.init(Dictionary(elements, uniquingKeysWith: { first, _ in first }))
-    }
-}
-
-@available(*, deprecated)
-extension DependencyMirrors: JSONMappable, JSONSerializable {
-    public convenience init(json: JSON) throws {
-        self.init(try [Mirror](json: json))
-    }
-
-    public func toJSON() -> JSON {
-        let mirrors = self.index.map { Mirror(original: $0.key, mirror: $0.value) }
-        return .array(mirrors.sorted(by: { $0.original < $1.mirror }).map { $0.toJSON() })
-    }
-}
-
-/// An individual repository mirror.
-@available(*, deprecated)
-private struct Mirror {
-    /// The original repository path.
-    let original: String
-
-    /// The mirrored repository path.
-    let mirror: String
-
-    init(original: String, mirror: String) {
-        self.original = original
-        self.mirror = mirror
-    }
-}
-
-@available(*, deprecated)
-extension Mirror: JSONMappable, JSONSerializable {
-    init(json: JSON) throws {
-        self.original = try json.get("original")
-        self.mirror = try json.get("mirror")
-    }
-
-    func toJSON() -> JSON {
-        .init([
-            "original": original,
-            "mirror": mirror
-        ])
     }
 }

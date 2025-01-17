@@ -13,7 +13,6 @@
 import Basics
 import Foundation
 import PackageModel
-import TSCBasic
 
 /// Name of the module map file recognized by the Clang and Swift compilers.
 public let moduleMapFilename = "module.modulemap"
@@ -31,7 +30,7 @@ protocol ModuleMapProtocol {
     var moduleMapDirectory: AbsolutePath { get }
 }
 
-extension SystemLibraryTarget: ModuleMapProtocol {
+extension SystemLibraryModule: ModuleMapProtocol {
     var moduleMapDirectory: AbsolutePath {
         return path
     }
@@ -41,7 +40,7 @@ extension SystemLibraryTarget: ModuleMapProtocol {
     }
 }
 
-extension ClangTarget: ModuleMapProtocol {
+extension ClangModule: ModuleMapProtocol {
     var moduleMapDirectory: AbsolutePath {
         return includeDir
     }
@@ -52,8 +51,8 @@ extension ClangTarget: ModuleMapProtocol {
 }
 
 /// A module map generator for Clang targets.  Module map generation consists of two steps:
-/// 1. Examining a target's public-headers directory to determine the appropriate module map type
-/// 2. Generating a module map for any target that doesn't have a custom module map file
+/// 1. Examining a module's public-headers directory to determine the appropriate module map type
+/// 2. Generating a module map for any module that doesn't have a custom module map file
 ///
 /// When a custom module map exists in the header directory, it is used as-is.  When a custom module map does not exist, a module map is generated based on the following rules:
 ///
@@ -64,9 +63,9 @@ extension ClangTarget: ModuleMapProtocol {
 /// *  Otherwise, if the "include" directory only contains header files and no other subdirectory:
 ///    Generates: `umbrella "path/to/include"`
 ///
-/// These rules are documented at https://github.com/apple/swift-package-manager/blob/master/Documentation/Usage.md#creating-c-language-targets.  To avoid breaking existing packages, do not change the semantics here without making any change conditional on the tools version of the package that defines the target.
+/// These rules are documented at https://github.com/swiftlang/swift-package-manager/blob/master/Documentation/Usage.md#creating-c-language-targets.  To avoid breaking existing packages, do not change the semantics here without making any change conditional on the tools version of the package that defines the module.
 ///
-/// Note that a module map generator doesn't require a target to already have been instantiated; it can operate on information that will later be used to instantiate a target.
+/// Note that a module map generator doesn't require a module to already have been instantiated; it can operate on information that will later be used to instantiate a module.
 public struct ModuleMapGenerator {
 
     /// The name of the Clang target (for diagnostics).
@@ -90,11 +89,11 @@ public struct ModuleMapGenerator {
 
     /// Inspects the file system at the public-headers directory with which the module map generator was instantiated, and returns the type of module map that applies to that directory.  This function contains all of the heuristics that implement module map policy for package targets; other functions just use the results of this determination.
     public func determineModuleMapType(observabilityScope: ObservabilityScope) -> ModuleMapType {
-        // The following rules are documented at https://github.com/apple/swift-package-manager/blob/master/Documentation/Usage.md#creating-c-language-targets.  To avoid breaking existing packages, do not change the semantics here without making any change conditional on the tools version of the package that defines the target.
+        // The following rules are documented at https://github.com/swiftlang/swift-package-manager/blob/master/Documentation/Usage.md#creating-c-language-targets.  To avoid breaking existing packages, do not change the semantics here without making any change conditional on the tools version of the package that defines the module.
 
         let diagnosticsEmitter = observabilityScope.makeDiagnosticsEmitter {
             var metadata = ObservabilityMetadata()
-            metadata.targetName = self.targetName
+            metadata.moduleName = self.targetName
             return metadata
         }
 
@@ -170,32 +169,36 @@ public struct ModuleMapGenerator {
             return .umbrellaDirectory(publicHeadersDir)
         }
 
-        // Otherwise, the target's public headers are considered to be incompatible with modules.  Per the original design, though, an umbrella directory is still created for them.  This will lead to build failures if those headers are included and they are not compatible with modules.  A future evolution proposal should revisit these semantics, especially to make it easier to existing wrap C source bases that are incompatible with modules.
+        // Otherwise, the module's public headers are considered to be incompatible with modules.  Per the original design, though, an umbrella directory is still created for them.  This will lead to build failures if those headers are included and they are not compatible with modules.  A future evolution proposal should revisit these semantics, especially to make it easier to existing wrap C source bases that are incompatible with modules.
         return .umbrellaDirectory(publicHeadersDir)
     }
 
     /// Generates a module map based of the specified type, throwing an error if anything goes wrong.  Any diagnostics are added to the receiver's diagnostics engine.
     public func generateModuleMap(type: GeneratedModuleMapType, at path: AbsolutePath) throws {
-        let stream = BufferedOutputByteStream()
-        stream <<< "module \(moduleName) {\n"
+        var moduleMap = "module \(moduleName) {\n"
         switch type {
         case .umbrellaHeader(let hdr):
-            stream <<< "    umbrella header \"\(hdr.moduleEscapedPathString)\"\n"
+            moduleMap.append("    umbrella header \"\(hdr.moduleEscapedPathString)\"\n")
         case .umbrellaDirectory(let dir):
-            stream <<< "    umbrella \"\(dir.moduleEscapedPathString)\"\n"
+            moduleMap.append("    umbrella \"\(dir.moduleEscapedPathString)\"\n")
         }
-        stream <<< "    export *\n"
-        stream <<< "}\n"
+        moduleMap.append(
+            """
+                export *
+            }
+
+            """
+        )
 
         // FIXME: This doesn't belong here.
         try fileSystem.createDirectory(path.parentDirectory, recursive: true)
 
         // If the file exists with the identical contents, we don't need to rewrite it.
         // Otherwise, compiler will recompile even if nothing else has changed.
-        if let contents = try? fileSystem.readFileContents(path), contents == stream.bytes {
+        if let contents = try? fileSystem.readFileContents(path).validDescription, contents == moduleMap {
             return
         }
-        try fileSystem.writeFileContents(path, bytes: stream.bytes)
+        try fileSystem.writeFileContents(path, string: moduleMap)
     }
 }
 
