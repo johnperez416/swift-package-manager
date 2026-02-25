@@ -615,7 +615,7 @@ extension PackageGraph.ResolvedModule {
     /// Collect the build settings defined in the package manifest.
     /// Some of them apply *only* to the target itself, while others are also imparted to clients.
     /// Note that the platform is *optional*; unconditional settings have no platform condition.
-    func computeAllBuildSettings(observabilityScope: ObservabilityScope) -> AllBuildSettings {
+    func computeAllBuildSettings(observabilityScope: ObservabilityScope, forRemotePackage: Bool) -> AllBuildSettings {
         var allSettings = AllBuildSettings()
 
         for (declaration, settingsAssigments) in self.underlying.buildSettings.assignments {
@@ -651,6 +651,22 @@ extension PackageGraph.ResolvedModule {
                     singleValueSetting = nil
                     multipleValueSetting = .OTHER_LDFLAGS
                     values = settingAssignment.values.map { "-l\($0)" }
+                case .OTHER_SWIFT_FLAGS:
+                    singleValueSetting = nil
+                    multipleValueSetting = .OTHER_SWIFT_FLAGS
+                    if forRemotePackage {
+                        values = WarningControlFlags.filterSwiftWarningControlFlags(settingAssignment.values)
+                    } else {
+                        values = settingAssignment.values
+                    }
+                case .OTHER_CFLAGS, .OTHER_CPLUSPLUSFLAGS:
+                    singleValueSetting = nil
+                    multipleValueSetting = ProjectModel.BuildSettings.MultipleValueSetting(from: declaration)
+                    if forRemotePackage {
+                        values = WarningControlFlags.filterClangWarningControlFlags(settingAssignment.values)
+                    } else {
+                        values = settingAssignment.values
+                    }
                 default:
                     if declaration.allowsMultipleValues {
                         singleValueSetting = nil
