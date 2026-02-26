@@ -79,6 +79,9 @@ public final class PackagePIFBuilder {
         /// Is this the root package?
         var isRootPackage: Bool { get }
 
+        /// Is this a remote package?
+        var isRemote: Bool { get }
+
         // TODO: Maybe move these 3-4 properties to the `PIFBuilder.PIFBuilderParameters` struct.
 
         /// If a pure Swift package is open in the workspace.
@@ -571,7 +574,7 @@ public final class PackagePIFBuilder {
         // (If we want to be extra careful with differences to the existing PIF in the SwiftPM.)
         settings[.OTHER_CFLAGS] = ["$(inherited)", "-DXcode"]
 
-        if !self.delegate.isRootPackage {
+        if self.delegate.isRemote {
             if self.suppressWarningsForPackageDependencies {
                 settings[.SUPPRESS_WARNINGS] = "YES"
             }
